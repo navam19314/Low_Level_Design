@@ -3,6 +3,8 @@ package com.conceptcoding.interviewquestions.connectfour.model;
 public class Board {
 
     private static final int CONNECT = 4;
+
+    // Only 4 axes pass through any cell; for each we count outward in BOTH dir and -dir.
     private static final int[][] DIRECTIONS = {
             {0, 1},   // horizontal
             {1, 0},   // vertical
@@ -39,10 +41,12 @@ public class Board {
         return grid[row][col];
     }
 
+    // Top row empty => column has room. Cheaper than scanning the whole column.
     public boolean canPlace(int col) {
         return col >= 0 && col < cols && grid[0][col] == null;
     }
 
+    // Gravity: scan from bottom up; first null slot is where the disc lands.
     public int placeDisc(int col, DiscColor color) {
         if (!canPlace(col)) {
             return -1;
@@ -56,6 +60,7 @@ public class Board {
         return -1;
     }
 
+    // If every top cell is filled, every column below it must also be filled.
     public boolean isFull() {
         for (int c = 0; c < cols; c++) {
             if (grid[0][c] == null) {
@@ -65,6 +70,7 @@ public class Board {
         return true;
     }
 
+    // Only check the 4 lines through the disc just placed: +1 for itself, then count outward each way.
     public boolean checkWin(int row, int col, DiscColor color) {
         if (!inBounds(row, col) || grid[row][col] != color) {
             return false;

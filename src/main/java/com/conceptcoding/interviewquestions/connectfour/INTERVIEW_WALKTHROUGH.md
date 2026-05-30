@@ -539,6 +539,183 @@ class ConnectFourGame {
 
 ---
 
+## Design Patterns — Hello Interview's canonical 8, and WHEN to mention each
+
+The single biggest pattern mistake at SDE‑2 level isn't *not knowing* patterns — it's **forcing them into the wrong step**. Patterns volunteered in Step 1, 2, or 3 sound rehearsed; the same patterns named in Step 5 sound senior.
+
+> **Hello Interview's stance** (worth memorizing): *"Patterns arise from good design decisions, not the other way around. Most interview designs use zero to two patterns maximum."*
+>
+> **Geography note (matters for you):** US interviews evaluate design quality without explicit pattern names. **India-based interviews (including Adobe/Microsoft/Amazon India) expect candidates to identify patterns by name.** Since you're interviewing in India, err on the side of **explicitly naming** the pattern when it fits — but still only when it fits.
+
+### The 5-step timing rule (universal — applies to every LLD problem)
+
+| Step                       | Mention patterns?              | Why                                                                                          |
+| -------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
+| **1. Requirements**        | **Never.**                     | You're gathering scope. Naming patterns here = you've decided the design before clarifying.  |
+| **2. Entities**            | **Never.** (One exception)    | You're listing nouns. Exception: declaring an interface for "varying behavior later" — say *"interface"*, don't say *"Strategy"*. |
+| **3. Class Design**        | **Rarely.** Only if the base design literally instantiates one (e.g., an injected `WinStrategy`). | Premature naming = pattern-stuffing. Better: name the **principle** (Info Expert, Tell-Don't-Ask). |
+| **4. Implementation**      | **Never.**                     | You're writing method bodies. Patterns aren't a code-shape concern at this resolution.       |
+| **5. Extensibility**       | **YES — 90% of mentions belong here.** | Every "what if..." follow-up maps to one pattern. Naming it = senior signal.            |
+
+> **The senior one-liner to drop at the end of Step 3:**
+> *"I'm deliberately staying free of GoF patterns at the base level — the design relies on Information Expert and Tell-Don't-Ask. I'll point out where patterns earn their place when we get to extensibility."*
+>
+> This single sentence proves you know patterns AND know when not to force them. Exactly the SDE‑2 signal.
+
+### Hello Interview's canonical 8 × interviewer trigger phrase
+
+When the interviewer in Step 5 (or a senior-level Step 3 deep-dive) says something matching the **trigger**, name the **pattern**. That's how it sounds natural.
+
+| # | Pattern              | Category   | Trigger phrase from interviewer                                                | What you say (one sentence)                                                                                       |
+| - | -------------------- | ---------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| 1 | **Strategy** ⭐       | Behavioral | "different rules" · "variants" · "swap at runtime" · "piles of if/else by type" | *"Promote X to an interface; inject the concrete implementation. Replaces conditionals with polymorphism."*       |
+| 2 | **Observer**         | Behavioral | "notify multiple" · "broadcast" · "event" · "when X happens, also do Y, Z, W"  | *"X publishes events; subscribers register independently. Decouples X from how the world reacts."*                |
+| 3 | **State Machine**    | Behavioral | "behavior depends on state" · "complex transitions" · "state" repeated in reqs | *"Each state is its own class with its own transitions — and I'd draw the state diagram on the board to show it."* |
+| 4 | **Factory** (Method) | Creational | "support different types" · "handle multiple variants" · creation logic varies | *"Centralize creation behind a factory method; callers stop depending on concrete classes."*                       |
+| 5 | **Builder**          | Creational | "many optional fields" · "complicated construction" · "configuration object"   | *"Builder collects fields incrementally and validates on `build()` — beats a 12-arg constructor."*                 |
+| 6 | **Singleton**        | Creational | "exactly one" · "global" · "shared resource"                                   | *"I'd resist textbook Singleton — it hurts tests and hides dependencies. **Inject a single instance via DI** instead."* |
+| 7 | **Decorator**        | Structural | "optional features" · "stack behaviors" · "combine enhancements"               | *"Wrap X in decorators that each add one concern (logging, encryption, retry). Avoids the subclass explosion."*   |
+| 8 | **Facade**           | Structural | "hide complexity" · "single entry point" · "wrap subsystem"                    | *"A clean facade over the messy parts. Orchestrators are usually facades — you're often already building one."*    |
+
+> **⭐ Strategy is the #1 priority pattern.** HI's exact words: *"If you learn one pattern from this page, make it this one."* It directly tests polymorphism + composition — the core of OO.
+
+### Three rules that make pattern mentions sound natural (not forced)
+
+1. **Cap at 2 patterns** for the whole interview (HI's "zero to two maximum"). Beyond that = forcing. Pick the two strongest from the follow-ups you actually get.
+2. **Always name the concrete win in the same breath.** *"Strategy here because win-rules need to swap at runtime"* > *"I'd use Strategy."* The win is what separates senior from "I memorized GoF."
+3. **Never volunteer a pattern without a trigger.** Trigger = either an interviewer phrase from the table above, or a concrete need you can point to in your own design. Volunteering *"this could be Visitor"* mid-Step-3 is the #1 over-engineering red flag.
+
+### How this maps to Connect Four specifically
+
+**What's naturally present in the base design** — name these by *principle*, and for the two genuine patterns, by name:
+
+- **Information Expert** (GRASP principle) — Board owns grid + `checkWin`; Game owns turn + state.
+- **Tell, Don't Ask** (principle) — Game asks `board.checkWin(...)`, never peeks at the array.
+- **Facade (#8)** — *ConnectFourGame is a facade* over `Board`, `Player`, and `GameState`. You're building this without trying. Name it once when you describe Game in Step 2: *"Game is the orchestrator — effectively a facade over Board and Player so callers only see one entry point."*
+- **State Machine (#3) — lite** — `GameState` enum is a 3-state machine. Don't promote to full State pattern unless the interviewer adds states with materially different behavior. If they do (e.g., PAUSED, ABORTED with different `makeMove` semantics), then promote.
+
+**What to invoke if the interviewer pulls the matching follow-up in Step 5:**
+
+| Follow-up                                  | Pattern (HI's 8)             | Your line                                                                                            |
+| ------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| "Different win rules (Connect-K / Gomoku)" | **Strategy (#1)** ⭐         | *"Promote win-checking to a `WinStrategy` interface; inject into Board. Same direction-vector code, different `CONNECT` value."* |
+| "AI opponent / pluggable players"          | **Strategy (#1)** ⭐ on Player | *"`Player` becomes an interface with `chooseMove(GameView)`. `HumanPlayer` reads stdin; `BotPlayer` runs minimax. Game is unchanged."* |
+| "Notify UI / logger / analytics when game ends" | **Observer (#2)**       | *"Game publishes `GameEvent`s; UI, analytics, logger subscribe. Decouples Game from how the world reacts."* |
+| "Add PAUSED / ABORTED states with their own rules" | **State Machine (#3)** | *"Promote `GameState` to State classes — each owns its own `makeMove` behavior. I'd draw the state diagram before coding."* |
+| "Support multiple game variants from one factory" | **Factory (#4)**        | *"`GameFactory.create(VariantKind)` returns the right Game subtype. Callers don't depend on concrete variants."* |
+
+> **For "add undo":** HI's canonical 8 does NOT include Command or Memento. So **don't lead with those names** — describe the technique: *"All state mutations flow through `makeMove`, so I'd snapshot pre-state into a stack before mutating; `undo()` pops and restores."* If your interviewer prompts for the pattern name, *then* mention Memento — but it's not in the HI cheat sheet, so they may not be looking for it.
+
+**Patterns to actively refuse if the interviewer baits you:**
+
+- **Singleton on Board** — there's one Board per *game instance*, not one per process. Refuse politely: *"I'd avoid Singleton — it would block multi-game support and complicate tests. If we truly need one game per process, I'd DI a single instance."*
+- **Builder for the no-arg `Board()` / 2-arg `Game(red, yellow)`** — academic. HI explicitly warns: *"most interview problems involve simple domain objects with 2-4 required fields where normal constructors suffice."*
+- **Factory for `Player` / `DiscColor`** — only 2 colors, 2 players. A constructor is clearer.
+- **Decorator on Player / Board** — wrong shape; no stackable optional behaviors here.
+
+---
+
+## Interview deep-dives — the questions you'll definitely get asked
+
+This section covers the five follow-up questions almost every SDE‑2 LLD round asks once Steps 1–5 are done.
+
+### 1. Complexity (Big-O) — have this table mentally ready
+
+| Operation              | Time                                                                | Space                  | Notes                                                                              |
+| ---------------------- | ------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `makeMove(p, c)`       | `O(R + K)` ≈ **O(1)** for fixed 6×7, K=4                            | O(1)                   | Dominated by `placeDisc` + `checkWin`                                              |
+| `placeDisc(c, color)`  | `O(R)`                                                              | O(1)                   | Bottom-up scan to find first empty cell                                            |
+| `canPlace(c)`          | **O(1)**                                                            | O(1)                   | Top-row check only                                                                 |
+| `isFull()`             | `O(C)`                                                              | O(1)                   | Top-row sweep — every column full ⇒ board full                                     |
+| `checkWin(r, c, color)`| `O(4 × K)` = **O(1)** for fixed K=4                                 | O(1)                   | 4 directions × max K cells outward each way                                        |
+| Storage (grid)         | —                                                                   | **O(R × C)** = O(42)   | The grid                                                                           |
+
+> **Senior callout:** *"`checkWin` is O(1) for fixed K because we only inspect the 4 lines through the just-dropped disc, not the whole board. A naive 'scan every row + column + both diagonals' would be O(R × C) per move."*
+
+### 2. Concurrency / thread-safety
+
+For a turn-based local game it's single-threaded. For an online server hosting many games:
+
+- **One game per thread (single-writer per game)** is the cleanest model — no locks, no races. A per-game executor receives moves from a queue.
+- If you must share state across threads (e.g., reads from a spectator), use a simple lock or copy-on-read.
+
+```java
+public class ConnectFourGame {
+    private final Object lock = new Object();
+
+    public boolean makeMove(Player player, int column) {
+        synchronized (lock) {
+            // existing guard clauses + happy path
+            return doMakeMoveUnlocked(player, column);
+        }
+    }
+
+    public Player getCurrentPlayer() { synchronized (lock) { return currentPlayer; } }
+    public GameState getGameState()  { synchronized (lock) { return state; } }
+    // ... etc.
+}
+```
+
+> **Senior callout:** *"For high throughput I'd skip locks entirely — one thread per game, moves arrive on a per-game queue. Lock-free by construction, and matches the natural turn-based semantics."*
+
+### 3. Testing — what to write tests for
+
+The base design is testable without I/O because Game/Board don't touch stdin — only `PlayGame.main` does.
+
+| Test category    | Cases to cover                                                                                              |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Happy path       | Red wins horizontally / vertically / diag-`\` / diag-`/`; Yellow wins same set; Draw on a full no-winner board |
+| Guard clauses    | Move after WON; move when state is DRAW; move when it's the other player's turn; move into a full column; move into out-of-bounds column |
+| Win-check edges  | Exactly 4 in a row ⇒ WIN; only 3 ⇒ no win; 5+ same color ⇒ still WIN (counts the moment 4 form)             |
+| State invariants | WON is terminal — no transitions out; DRAW is terminal; winner field is null iff state ≠ WON               |
+
+```java
+@Test
+void redWinsOnHorizontalFour() {
+    ConnectFourGame g = newGame();
+    g.makeMove(red, 0);  g.makeMove(yellow, 0);
+    g.makeMove(red, 1);  g.makeMove(yellow, 1);
+    g.makeMove(red, 2);  g.makeMove(yellow, 2);
+    assertTrue(g.makeMove(red, 3));
+    assertEquals(GameState.WON, g.getGameState());
+    assertEquals(red, g.getWinner());
+}
+
+@Test
+void moveAfterWinIsRejected() {
+    ConnectFourGame g = playToRedWin();
+    assertFalse(g.makeMove(yellow, 5));
+    assertEquals(red, g.getWinner());   // state didn't change
+}
+
+@Test
+void fullColumnIsRejected() {
+    ConnectFourGame g = newGame();
+    fillColumn(g, /* col */ 3);                 // 6 alternating drops
+    assertFalse(g.makeMove(g.getCurrentPlayer(), 3));
+}
+```
+
+> **Senior callout:** *"The reason this is testable without mocks is that Game's only inputs are method arguments — no `Scanner`, no clock, no random. I/O lives in `PlayGame`."*
+
+### 4. SOLID mapping (mention by letter when asked)
+
+| Letter                       | Where it shows up                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **S** Single Responsibility  | Game = workflow rules. Board = grid + win-check. Player = identity. Three reasons to change → three classes. |
+| **O** Open/Closed            | `CONNECT` and `DIRECTIONS` are constants — closed for modification. Win-checking opens for extension via a future `WinStrategy` interface (Connect-K, Gomoku). |
+| **L** Liskov Substitution    | When Player becomes an interface, `HumanPlayer` and `BotPlayer` substitute cleanly — same `chooseMove(GameView)` contract. |
+| **I** Interface Segregation  | Game exposes 5 narrow methods, not one fat `getState()`. Board exposes 4 focused queries instead of returning the grid. |
+| **D** Dependency Inversion   | Game depends on `Board` (the abstraction), never on `int[][]`. When AI lands, Game depends on the `Player` interface, not concrete `HumanPlayer`. |
+
+### 5. "Summarize your design in 30 seconds" — memorize this script
+
+> *"Three classes: Game, Board, Player. Game is the orchestrator — effectively a facade over Board and Player exposing one mutation method, `makeMove`. Board owns the 6×7 grid and the placement and win-detection rules; it uses a direction-vector trick so `checkWin` is O(1) by inspecting only the 4 lines through the just-dropped disc. Player is identity plus DiscColor. `GameState` is an enum so 'won AND drawn' is unrepresentable. The base design is pattern-free — encapsulation and Information Expert do the work — and absorbs follow-ups like undo, Connect-K, AI player, or game-end notifications without rewrites."*
+
+That's ~30 seconds. Hits: structure, the algorithmic insight (direction vectors), the senior framing (no forced patterns), and extensibility — in one breath.
+
+---
+
 ## Closing soundbites (memorize these)
 
 - **Opening:** *"Before I design, let me clarify scope and rules."*

@@ -27,6 +27,8 @@ public class ConnectFourGame {
         this.winner = null;
     }
 
+    // Guard clauses up top keep the happy path unindented.
+    // Single mutation point — anything that needs to react to a move (undo, observers) hooks here.
     public boolean makeMove(Player player, int column) {
         if (state != GameState.IN_PROGRESS) {
             return false;
@@ -37,7 +39,7 @@ public class ConnectFourGame {
 
         int row = board.placeDisc(column, player.getColor());
         if (row == -1) {
-            return false;
+            return false; // invalid column index or column already full
         }
 
         if (board.checkWin(row, column, player.getColor())) {
