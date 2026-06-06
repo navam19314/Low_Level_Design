@@ -5,9 +5,7 @@ import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.Ticket;
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.VehicleType;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,12 +18,12 @@ public class ParkingLotDriver {
         spots.add(new ParkingSpot("C2", SpotType.CAR));
         spots.add(new ParkingSpot("L1", SpotType.LARGE));
 
-        MutableClock clock = new MutableClock(Instant.parse("2026-06-01T08:00:00Z"));
-        ParkingLot lot = new ParkingLot(spots, /* hourlyRateCents */ 500, clock);
+        MutableClock clock = new MutableClock(LocalDateTime.of(2026, 6, 1, 8, 0));
+        ParkingLot lot = new ParkingLot(spots, /* hourlyRateCents */ 500, clock::now);
 
         System.out.println("--- Happy path: car parks for 2.5h, charged 3h ---");
         Ticket t1 = lot.enter(VehicleType.CAR);
-        System.out.println("Issued ticket " + t1.getId() + " for spot " + t1.getSpotId());
+        System.out.println("Issued ticket " + t1.getId() + " for spot " + t1.getSpotId() + " at " + t1.getEntryTime());
         clock.advanceMinutes(150);
         long fee = lot.exit(t1.getId());
         System.out.println("Fee: " + fee + " cents (expected 1500)");
@@ -64,13 +62,10 @@ public class ParkingLotDriver {
         }
     }
 
-    static final class MutableClock extends Clock {
-        private Instant now;
-        MutableClock(Instant start) { this.now = start; }
-        @Override public Instant instant() { return now; }
-        @Override public long millis()    { return now.toEpochMilli(); }
-        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
-        @Override public Clock withZone(ZoneId z) { return this; }
-        void advanceMinutes(long m) { now = now.plusSeconds(m * 60L); }
+    static final class MutableClock {
+        private LocalDateTime now;
+        MutableClock(LocalDateTime start) { this.now = start; }
+        LocalDateTime now() { return now; }
+        void advanceMinutes(long m) { now = now.plusMinutes(m); }
     }
 }

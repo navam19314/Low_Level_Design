@@ -5,7 +5,8 @@ import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.Ticket;
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.VehicleType;
 
-import java.time.Clock;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Single-threaded by contract. The base design assumes one caller drives enter/exit at a time.
@@ -30,19 +32,17 @@ import java.util.UUID;
  */
 public class ParkingLot {
 
-    private static final long MILLIS_PER_HOUR = 60L * 60L * 1000L;
-
     private final List<ParkingSpot> spots;
     private final Map<String, Ticket> activeTickets;
     private final Set<String> occupiedSpotIds;
     private final long hourlyRateCents;
-    private final Clock clock;
+    private final Supplier<LocalDateTime> clock;
 
     public ParkingLot(List<ParkingSpot> spots, long hourlyRateCents) {
-        this(spots, hourlyRateCents, Clock.systemUTC());
+        this(spots, hourlyRateCents, LocalDateTime::now);
     }
 
-    public ParkingLot(List<ParkingSpot> spots, long hourlyRateCents, Clock clock) {
+    public ParkingLot(List<ParkingSpot> spots, long hourlyRateCents, Supplier<LocalDateTime> clock) {
         this.spots = spots;
         this.hourlyRateCents = hourlyRateCents;
         this.clock = clock;
@@ -60,7 +60,7 @@ public class ParkingLot {
 
         occupiedSpotIds.add(spot.getId());
         String ticketId = UUID.randomUUID().toString();
-        Ticket ticket = new Ticket(ticketId, spot.getId(), vehicleType, clock.millis());
+        Ticket ticket = new Ticket(ticketId, spot.getId(), vehicleType, clock.get());
         activeTickets.put(ticketId, ticket);
         return ticket;
     }
@@ -76,7 +76,7 @@ public class ParkingLot {
             throw new NoSuchElementException("Ticket not found or already used");
         }
 
-        long fee = computeFee(ticket.getEntryTimeMs(), clock.millis());
+        long fee = computeFee(ticket.getEntryTime(), clock.get());
         occupiedSpotIds.remove(ticket.getSpotId());
         activeTickets.remove(ticketId);
         return fee;
@@ -103,13 +103,10 @@ public class ParkingLot {
         }
     }
 
-    // Any partial hour rounds UP to the next full hour — covered by the modulo check.
-    private long computeFee(long entryTimeMs, long exitTimeMs) {
-        long durationMs = exitTimeMs - entryTimeMs;
-        long hours = durationMs / MILLIS_PER_HOUR;
-        if (durationMs % MILLIS_PER_HOUR > 0) {
-            hours++;
-        }
+    // Any partial hour rounds UP to the next full hour. Minimum charge is 1 hour.
+    private long computeFee(LocalDateTime entryTime, LocalDateTime exitTime) {
+        long minutes = Duration.between(entryTime, exitTime).toMinutes();
+        long hours = (minutes + 59) / 60; // ceiling division
         if (hours == 0) {
             hours = 1; // minimum 1-hour charge even for instant exit
         }
