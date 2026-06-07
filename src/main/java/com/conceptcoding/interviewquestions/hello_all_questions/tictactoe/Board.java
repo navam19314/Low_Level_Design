@@ -2,27 +2,47 @@ package com.conceptcoding.interviewquestions.hello_all_questions.tictactoe;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.tictactoe.model.Symbol;
 
+/*
+ * Board — physical state of the 3x3 grid.
+ *
+ * Responsibilities:
+ *   - canPlace   : is this cell empty and in bounds?
+ *   - placeMark  : write a symbol to the cell
+ *   - checkWin   : did the last move complete a line?
+ *   - isFull     : are all 9 cells occupied?
+ *   - getCell    : read what's at a cell (for query / UI)
+ *   - reset      : clear the board for a new game
+ *
+ * NOT here: turn order, game state, who the players are — those belong to Game.
+ */
 public class Board {
 
     static final int SIZE = 3;
     private final Symbol[][] grid = new Symbol[SIZE][SIZE];
+
+    // --- guards ---
 
     public boolean canPlace(int row, int col) {
         if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
         return grid[row][col] == null;
     }
 
+    // --- mutations ---
+
     public void placeMark(int row, int col, Symbol mark) {
         grid[row][col] = mark;
     }
 
-    // Only check lines through (row, col) — winning line must include the last move. O(N) not O(N²).
-    public boolean checkWin(int row, int col, Symbol mark) {
-        if (countInLine(mark, row, 0, 0, 1) == SIZE) return true;           // row
-        if (countInLine(mark, 0, col, 1, 0) == SIZE) return true;           // col
-        if (row == col && countInLine(mark, 0, 0, 1, 1) == SIZE) return true;          // main diag
-        if (row + col == SIZE - 1 && countInLine(mark, 0, SIZE - 1, 1, -1) == SIZE) return true; // anti-diag
-        return false;
+    public void reset() {
+        for (int r = 0; r < SIZE; r++)
+            for (int c = 0; c < SIZE; c++)
+                grid[r][c] = null;
+    }
+
+    // --- queries ---
+
+    public Symbol getCell(int row, int col) {
+        return grid[row][col];
     }
 
     public boolean isFull() {
@@ -32,12 +52,29 @@ public class Board {
         return true;
     }
 
-    private int countInLine(Symbol mark, int startRow, int startCol, int dRow, int dCol) {
+    /*
+     * Only check the four lines that pass through (row, col).
+     * A winning line must include the cell just placed, so scanning the whole
+     * board every move is unnecessary — this is O(N) not O(N²).
+     */
+    public boolean checkWin(int row, int col, Symbol mark) {
+        if (countLine(mark, row, 0,      0, +1) == SIZE) return true;  // row
+        if (countLine(mark, 0,   col,   +1,  0) == SIZE) return true;  // col
+        if (row == col
+                && countLine(mark, 0, 0,      +1, +1) == SIZE) return true;  // main diagonal
+        if (row + col == SIZE - 1
+                && countLine(mark, 0, SIZE-1, +1, -1) == SIZE) return true;  // anti-diagonal
+        return false;
+    }
+
+    private int countLine(Symbol mark, int r, int c, int dr, int dc) {
         int count = 0;
-        for (int i = 0; i < SIZE; i++, startRow += dRow, startCol += dCol)
-            if (grid[startRow][startCol] == mark) count++;
+        for (int i = 0; i < SIZE; i++, r += dr, c += dc)
+            if (grid[r][c] == mark) count++;
         return count;
     }
+
+    // --- display ---
 
     public String render() {
         StringBuilder sb = new StringBuilder("  0   1   2\n");
