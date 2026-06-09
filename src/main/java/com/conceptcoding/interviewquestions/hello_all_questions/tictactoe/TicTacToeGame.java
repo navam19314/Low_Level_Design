@@ -36,8 +36,8 @@ public class TicTacToeGame {
     private Player    winner = null;
 
     public TicTacToeGame(String nameX, String nameO) {
-        playerX       = new Player(nameX, Symbol.X);
-        playerO       = new Player(nameO, Symbol.O);
+        playerX = new Player(nameX, Symbol.X);
+        playerO = new Player(nameO, Symbol.O);
         currentPlayer = playerX;    // X always goes first
     }
 
@@ -48,9 +48,9 @@ public class TicTacToeGame {
         if (player != currentPlayer)        return false;   // wrong turn
         if (!board.canPlace(row, col))      return false;   // occupied or OOB
 
-        board.placeMark(row, col, player.mark());
+        board.placeMark(row, col, player.getMark());
 
-        if (board.checkWin(row, col, player.mark())) {
+        if (board.checkWin(row, col, player.getMark())) {
             state  = GameState.WON;
             winner = player;
         } else if (board.isFull()) {
