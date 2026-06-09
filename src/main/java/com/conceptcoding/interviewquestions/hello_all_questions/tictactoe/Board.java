@@ -58,20 +58,31 @@ public class Board {
      * board every move is unnecessary — this is O(N) not O(N²).
      */
     public boolean checkWin(int row, int col, Symbol mark) {
-        if (countLine(mark, row, 0,      0, +1) == SIZE) return true;  // row
-        if (countLine(mark, 0,   col,   +1,  0) == SIZE) return true;  // col
-        if (row == col
-                && countLine(mark, 0, 0,      +1, +1) == SIZE) return true;  // main diagonal
-        if (row + col == SIZE - 1
-                && countLine(mark, 0, SIZE-1, +1, -1) == SIZE) return true;  // anti-diagonal
-        return false;
-    }
+        // check row of last move
+        boolean win = true;
+        for (int c = 0; c < SIZE; c++) win &= (grid[row][c] == mark);
+        if (win) return true;
 
-    private int countLine(Symbol mark, int r, int c, int dr, int dc) {
-        int count = 0;
-        for (int i = 0; i < SIZE; i++, r += dr, c += dc)
-            if (grid[r][c] == mark) count++;
-        return count;
+        // check column of last move
+        win = true;
+        for (int r = 0; r < SIZE; r++) win &= (grid[r][col] == mark);
+        if (win) return true;
+
+        // check main diagonal — only if last move lies on it
+        if (row == col) {
+            win = true;
+            for (int i = 0; i < SIZE; i++) win &= (grid[i][i] == mark);
+            if (win) return true;
+        }
+
+        // check anti-diagonal — only if last move lies on it
+        if (row + col == SIZE - 1) {
+            win = true;
+            for (int i = 0; i < SIZE; i++) win &= (grid[i][SIZE - 1 - i] == mark);
+            if (win) return true;
+        }
+
+        return false;
     }
 
     // --- display ---
