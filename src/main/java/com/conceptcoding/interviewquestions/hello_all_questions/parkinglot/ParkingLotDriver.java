@@ -5,7 +5,6 @@ import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.Ticket;
 import com.conceptcoding.interviewquestions.hello_all_questions.parkinglot.model.VehicleType;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,16 +17,18 @@ public class ParkingLotDriver {
         spots.add(new ParkingSpot("C2", SpotType.CAR));
         spots.add(new ParkingSpot("L1", SpotType.LARGE));
 
-        MutableClock clock = new MutableClock(LocalDateTime.of(2026, 6, 1, 8, 0));
-        ParkingLot lot = new ParkingLot(spots, /* hourlyRateCents */ 500, clock::now);
+        // hourly rate: 500 cents = ₹5/hr
+        ParkingLot lot = new ParkingLot(spots, 500);
 
-        System.out.println("--- Happy path: car parks for 2.5h, charged 3h ---");
+        // --- Happy path: car enters and exits immediately (minimum 1h charge) ---
+        System.out.println("--- Car parks and exits (minimum 1h charge) ---");
         Ticket t1 = lot.enter(VehicleType.CAR);
-        System.out.println("Issued ticket " + t1.getId() + " for spot " + t1.getSpotId() + " at " + t1.getEntryTime());
-        clock.advanceMinutes(150);
+        System.out.println("Entry time : " + t1.getEntryTime());
+        System.out.println("Spot       : " + t1.getSpotId());
         long fee = lot.exit(t1.getId());
-        System.out.println("Fee: " + fee + " cents (expected 1500)");
+        System.out.println("Fee        : " + fee + " cents (expect >= 500)");
 
+        // --- Double exit rejected ---
         System.out.println("\n--- Double exit rejected ---");
         try {
             lot.exit(t1.getId());
@@ -35,20 +36,23 @@ public class ParkingLotDriver {
             System.out.println("Rejected: " + e.getMessage());
         }
 
-        System.out.println("\n--- Lot full for size ---");
+        // --- Lot full for a vehicle type ---
+        System.out.println("\n--- Lot full for CAR ---");
         lot.enter(VehicleType.CAR);
         lot.enter(VehicleType.CAR);
         try {
-            lot.enter(VehicleType.CAR);
+            lot.enter(VehicleType.CAR);   // no CAR spots left
         } catch (RuntimeException e) {
             System.out.println("Rejected: " + e.getMessage());
         }
 
-        System.out.println("\n--- Instant exit still charges 1h ---");
+        // --- Motorcycle — instant exit, minimum 1h charge ---
+        System.out.println("\n--- Motorcycle instant exit ---");
         Ticket t2 = lot.enter(VehicleType.MOTORCYCLE);
-        long instantFee = lot.exit(t2.getId());
-        System.out.println("Fee: " + instantFee + " cents (expected 500)");
+        long motoFee = lot.exit(t2.getId());
+        System.out.println("Fee: " + motoFee + " cents (expect 500)");
 
+        // --- Invalid ticket ---
         System.out.println("\n--- Invalid ticket ---");
         try {
             lot.exit("does-not-exist");
@@ -60,12 +64,5 @@ public class ParkingLotDriver {
         } catch (RuntimeException e) {
             System.out.println("Rejected: " + e.getMessage());
         }
-    }
-
-    static final class MutableClock {
-        private LocalDateTime now;
-        MutableClock(LocalDateTime start) { this.now = start; }
-        LocalDateTime now() { return now; }
-        void advanceMinutes(long m) { now = now.plusMinutes(m); }
     }
 }

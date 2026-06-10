@@ -200,7 +200,6 @@ com/conceptcoding/interviewquestions/hello_all_questions/movieticket/model/Theat
 com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/model/PaymentResult.class
 com/conceptcoding/interviewquestions/hello_all_questions/lrucache/LinkedHashMapLRUCache.class
 com/conceptcoding/interviewquestions/hello_all_questions/chess/piece/PieceHelpers.class
-com/conceptcoding/interviewquestions/hello_all_questions/parkinglot/ParkingLotDriver$MutableClock.class
 com/conceptcoding/interviewquestions/hello_all_questions/jobscheduler/policy/SchedulingPolicy.class
 com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/model/LimiterConfig.class
 com/conceptcoding/interviewquestions/hello_all_questions/movieticket/BookingSystemDriver.class
