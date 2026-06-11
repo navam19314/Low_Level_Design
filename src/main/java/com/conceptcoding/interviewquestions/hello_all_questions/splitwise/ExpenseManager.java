@@ -10,122 +10,81 @@ import com.conceptcoding.interviewquestions.hello_all_questions.splitwise.splitt
 import com.conceptcoding.interviewquestions.hello_all_questions.splitwise.splittype.SplitStrategy;
 import com.conceptcoding.interviewquestions.hello_all_questions.splitwise.splittype.SplitType;
 
-import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.UUID;
 
-/**
- * Orchestrator + facade. Owns the user registry, the expense ledger, the pairwise
- * balance graph, and the Strategy registry. Single public API: add expenses,
- * query balances, simplify debts.
- *
- * <p>Pairwise balance representation:
- * <pre>
- *   balances[A][B] = positive amount A is owed by B.
- *   We never store both balances[A][B] > 0 AND balances[B][A] > 0 — opposing
- *   amounts cancel during {@code updateBalance}.
- * </pre>
- *
- * <p>Thread-safety: every public mutator/reader is {@code synchronized(this)} —
- * coarse-grained per-manager lock. For finer concurrency (per-user locks with
- * ordered acquisition) see the walkthrough §5.
- */
 public class ExpenseManager {
 
-    private final Map<String, User> users = new HashMap<>();
-    private final List<Expense> expenses = new ArrayList<>();
-    private final Map<String, Map<String, Long>> balances = new HashMap<>();
-    private final Map<SplitType, SplitStrategy> strategies;
-    private final Clock clock;
-
-    public ExpenseManager() { this(Clock.systemUTC()); }
-
-    public ExpenseManager(Clock clock) {
-        this.clock = clock;
-        this.strategies = Map.of(
-                SplitType.EQUAL,   new EqualSplitStrategy(),
-                SplitType.EXACT,   new ExactSplitStrategy(),
-                SplitType.PERCENT, new PercentSplitStrategy()
-        );
-    }
+    private final Map<String, User>              users      = new HashMap<>();
+    private final List<Expense>                  expenses   = new ArrayList<>();
+    private final Map<String, Map<String, Long>> balances   = new HashMap<>();
+    private final Map<SplitType, SplitStrategy>  strategies = Map.of(
+            SplitType.EQUAL,   new EqualSplitStrategy(),
+            SplitType.EXACT,   new ExactSplitStrategy(),
+            SplitType.PERCENT, new PercentSplitStrategy()
+    );
+    private int expenseCounter = 0;   // simple sequential ID: EXP-1, EXP-2, ...
 
     public synchronized void addUser(User user) {
-        users.put(user.id(), user);
+        users.put(user.getId(), user);
     }
 
-    /**
-     * Add an expense. Resolves the splits via the appropriate strategy, then
-     * updates the pairwise balance graph. Returns the immutable record.
-     */
-    public synchronized Expense addExpense(String paidById,
-                                           long totalAmountCents,
+    public synchronized Expense addExpense(String paidById, long totalAmountCents,
                                            SplitType splitType,
                                            Map<String, Long> participantInputs,
                                            String description) {
-        if (totalAmountCents <= 0)              throw new IllegalArgumentException("amount must be > 0");
-        if (!users.containsKey(paidById))        throw new IllegalArgumentException("unknown payer " + paidById);
-        for (String uid : participantInputs.keySet()) {
-            if (!users.containsKey(uid))         throw new IllegalArgumentException("unknown participant " + uid);
-        }
+        if (totalAmountCents <= 0)
+            throw new IllegalArgumentException("Amount must be > 0");
+        if (!users.containsKey(paidById))
+            throw new IllegalArgumentException("Unknown payer: " + paidById);
+        for (String uid : participantInputs.keySet())
+            if (!users.containsKey(uid))
+                throw new IllegalArgumentException("Unknown participant: " + uid);
 
-        SplitStrategy strategy = strategies.get(splitType);
-        List<Split> splits = strategy.calculate(totalAmountCents, participantInputs);
+        // delegate math to strategy — may throw if inputs invalid (e.g. exact sum mismatch)
+        List<Split> splits = strategies.get(splitType).calculate(totalAmountCents, participantInputs);
 
-        Expense expense = new Expense(
-                UUID.randomUUID().toString(),
-                paidById,
-                totalAmountCents,
-                splits,
-                description,
-                clock.instant());
+        String expenseId = "EXP-" + (++expenseCounter);
+        Expense expense = new Expense(expenseId, paidById, totalAmountCents,
+                                      splits, description, LocalDateTime.now());
         expenses.add(expense);
 
-        // Update the balance graph: every non-payer owes the payer their share.
+        // every non-payer owes the payer their computed share
         for (Split s : splits) {
-            if (!s.userId().equals(paidById)) {
-                addOwed(paidById, s.userId(), s.amountCents());
+            if (!s.getUserId().equals(paidById)) {
+                addOwed(paidById, s.getUserId(), s.getAmountCents());
             }
         }
         return expense;
     }
 
-    /** Positive: u1 is owed money by u2; negative: u1 owes money to u2; zero: settled. */
+    // positive: u1 is owed by u2.  negative: u1 owes u2.  zero: settled.
     public synchronized long getBalance(String u1, String u2) {
         return getStored(u1, u2) - getStored(u2, u1);
     }
 
-    /** Net position of one user: positive → they are net owed; negative → they owe net. */
     public synchronized long getNetBalance(String userId) {
-        long net = 0L;
+        long net = 0;
         for (User other : users.values()) {
-            if (!other.id().equals(userId)) {
-                net += getBalance(userId, other.id());
-            }
+            if (!other.getId().equals(userId))
+                net += getBalance(userId, other.getId());
         }
         return net;
     }
 
-    /**
-     * Greedy debt simplification. NP-hard to do optimally; this produces ≤ N-1
-     * settlements which is the upper bound — typically much fewer.
-     *
-     * <p>Algorithm: compute net balance per user. Repeatedly pick the user with
-     * the largest CREDIT and the user with the largest DEBT, settle min of the
-     * two amounts between them. Repeat until both heaps are empty.
-     */
+    // Greedy simplification — max-heap of creditors, min-heap of debtors; match greedily.
+    // Produces at most N-1 settlements. Greedy, not optimal (optimal is NP-hard).
     public synchronized List<Settlement> simplifyDebts() {
-        // Step 1: net balance per user (positive = owed; negative = owes).
         Map<String, Long> net = new HashMap<>();
-        for (String userId : users.keySet()) {
-            long n = getNetBalance(userId);
-            if (n != 0) net.put(userId, n);
+        for (String uid : users.keySet()) {
+            long n = getNetBalance(uid);
+            if (n != 0) net.put(uid, n);
         }
 
-        // Step 2: max-heap of creditors (largest credit first), min-heap of debtors (most-negative first).
         PriorityQueue<String> creditors = new PriorityQueue<>((a, b) -> Long.compare(net.get(b), net.get(a)));
         PriorityQueue<String> debtors   = new PriorityQueue<>((a, b) -> Long.compare(net.get(a), net.get(b)));
         for (Map.Entry<String, Long> e : net.entrySet()) {
@@ -133,7 +92,6 @@ public class ExpenseManager {
             else if (e.getValue() < 0) debtors.offer(e.getKey());
         }
 
-        // Step 3: greedy match.
         List<Settlement> result = new ArrayList<>();
         while (!creditors.isEmpty() && !debtors.isEmpty()) {
             String c = creditors.poll();
@@ -155,15 +113,11 @@ public class ExpenseManager {
         return new ArrayList<>(expenses);
     }
 
-    // ----- internals -----
+    // ── internals ────────────────────────────────────────────────────────────────
 
-    /**
-     * Record that {@code debtorId} owes {@code creditorId} an additional {@code amount}.
-     * Cancels any opposing balance first so we never store both directions positive
-     * — the graph stays in a normalized form.
-     */
+    // Cancel any opposing balance first — never store both directions positive.
     private void addOwed(String creditorId, String debtorId, long amount) {
-        long opposing = getStored(debtorId, creditorId);    // amount creditor previously owed debtor
+        long opposing = getStored(debtorId, creditorId);
         if (opposing >= amount) {
             setStored(debtorId, creditorId, opposing - amount);
         } else {

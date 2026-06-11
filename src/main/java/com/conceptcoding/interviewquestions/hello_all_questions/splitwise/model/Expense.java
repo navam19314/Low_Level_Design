@@ -1,22 +1,32 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.splitwise.model;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * Immutable record of one expense: who paid, how much, who owes what.
- * The {@code splits} list is the COMPUTED result of applying a SplitStrategy to
- * raw user inputs — sums to totalAmountCents (invariant enforced by ExpenseManager).
- */
-public record Expense(
-        String id,
-        String paidById,
-        long totalAmountCents,
-        List<Split> splits,
-        String description,
-        Instant createdAt) {
+// Immutable ledger entry. Created once by ExpenseManager and never mutated.
+public class Expense {
 
-    public Expense {
-        splits = List.copyOf(splits);  // defensive immutable copy
+    private final String        id;
+    private final String        paidById;
+    private final long          totalAmountCents;
+    private final List<Split>   splits;
+    private final String        description;
+    private final LocalDateTime createdAt;
+
+    public Expense(String id, String paidById, long totalAmountCents,
+                   List<Split> splits, String description, LocalDateTime createdAt) {
+        this.id               = id;
+        this.paidById         = paidById;
+        this.totalAmountCents = totalAmountCents;
+        this.splits           = splits;
+        this.description      = description;
+        this.createdAt        = createdAt;
     }
+
+    public String        getId()               { return id; }
+    public String        getPaidById()         { return paidById; }
+    public long          getTotalAmountCents() { return totalAmountCents; }
+    public List<Split>   getSplits()           { return splits; }
+    public String        getDescription()      { return description; }
+    public LocalDateTime getCreatedAt()        { return createdAt; }
 }
