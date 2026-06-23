@@ -285,6 +285,65 @@ step() tick 5: direction = DOWN; pollFirst = 2.  Returns 2.  [DOWN]
 | "Passenger capacity" | Add `currentLoad` + `maxCapacity` to Elevator. `addStop` rejects when full. Update load at each stop. |
 | "Analytics / floor dashboard" | Observer — Controller publishes `ElevatorArrived` events. Analytics subscriber registers independently. |
 | "Different building configs" | Builder — `BuildingBuilder` collects elevator count, floors, dispatch strategy, then `build()`. |
+| "Make it thread-safe" | See below — this is a common deep-dive. |
+
+### Thread Safety Deep-Dive
+
+**The problem in our current design:**
+
+Our `step()` loop is meant to be called by a single simulation thread. But in a real building, hall-call buttons (`requestPickup`) and in-cab buttons (`selectFloor`) can fire from any thread at any time — even while `step()` is running.
+
+The race condition:
+```
+Thread A (tick loop):    step() is inside Elevator.step(), reading upQueue
+Thread B (hall button):  requestPickup() calls addStop(), which writes to upQueue
+                         → ConcurrentModificationException or corrupted TreeSet state
+```
+
+**Fix 1 — Synchronized methods on Controller (simplest, mention this first)**
+
+```java
+public synchronized void requestPickup(int floor, Direction direction) { ... }
+public synchronized void selectFloor(int elevatorId, int floor)        { ... }
+public synchronized void step()                                         { ... }
+```
+
+One lock on the Controller serializes all access. Simple. Fine for a building with low call frequency.
+
+**Fix 2 — Inbox queue per Elevator (better, mention if interviewer pushes)**
+
+The idea: `requestPickup` / `selectFloor` just drop a floor number into a thread-safe inbox. `step()` drains the inbox at the start of each tick into the TreeSets. The TreeSets are only ever touched by the step thread.
+
+```java
+public class Elevator {
+    private final ConcurrentLinkedQueue<Integer> inbox = new ConcurrentLinkedQueue<>();
+    private final TreeSet<Integer> upQueue   = new TreeSet<>();
+    private final TreeSet<Integer> downQueue = new TreeSet<>(Comparator.reverseOrder());
+
+    public void addStop(int floor) {
+        inbox.offer(floor);   // any thread can call this safely
+    }
+
+    public int step() {
+        // drain inbox first — single writer, no lock needed
+        Integer f;
+        while ((f = inbox.poll()) != null) {
+            if      (f > currentFloor) upQueue.add(f);
+            else if (f < currentFloor) downQueue.add(f);
+        }
+        // ... rest of SCAN logic unchanged ...
+    }
+}
+```
+
+Why this is better:
+- `ConcurrentLinkedQueue` is lock-free for producers — button presses never block.
+- TreeSets (the expensive sorted structures) are single-writer → no synchronization needed on them.
+- Producer threads and the SCAN thread never contend on the same data structure.
+
+**What to say in the interview:**
+
+> *"Our current design is single-threaded discrete ticks — that's the correct starting point for a 45-min round. If the interviewer asks about threads, I'd say: the race is between addStop (button press threads) and step (tick thread) both touching the same TreeSets. Simplest fix: synchronize requestPickup/selectFloor/step on the Controller. Better fix: per-elevator inbox — producers drop into a ConcurrentLinkedQueue, step drains it at tick start. TreeSets stay single-writer so no locks needed there. Same inbox-pattern as actor-model mailboxes."*
 
 ---
 
