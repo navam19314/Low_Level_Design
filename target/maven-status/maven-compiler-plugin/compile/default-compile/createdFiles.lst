@@ -3,7 +3,6 @@ com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processo
 com/conceptcoding/interviewquestions/hello_all_questions/notification/NotificationServiceDriver.class
 com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/Direction.class
 com/conceptcoding/interviewquestions/hello_all_questions/jobscheduler/JobScheduler.class
-com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/Request.class
 com/conceptcoding/interviewquestions/hello_all_questions/splitwise/model/User.class
 com/conceptcoding/interviewquestions/hello_all_questions/logger/Destination.class
 com/conceptcoding/interviewquestions/jobscheduler/enums/Priority.class
@@ -27,7 +26,6 @@ com/conceptcoding/interviewquestions/hello_all_questions/notification/Notificati
 com/conceptcoding/interviewquestions/hello_all_questions/cabbooking/model/Driver.class
 com/conceptcoding/interviewquestions/notificationsystem/UserPreference.class
 com/conceptcoding/interviewquestions/hello_all_questions/tictactoe/model/GameState.class
-com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/RequestType.class
 com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processor/NetBankingProcessor.class
 com/conceptcoding/interviewquestions/hello_all_questions/jobscheduler/model/JobStatus.class
 com/conceptcoding/interviewquestions/hello_all_questions/elevator/strategy/NearestDispatchStrategy.class
@@ -107,7 +105,6 @@ com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/RateLimiter
 com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processor/UpiProcessor.class
 com/conceptcoding/interviewquestions/hello_all_questions/cabbooking/model/Ride.class
 com/conceptcoding/interviewquestions/hello_all_questions/chess/piece/Queen.class
-com/conceptcoding/interviewquestions/hello_all_questions/elevator/strategy/DirectionAwareDispatchStrategy.class
 com/conceptcoding/interviewquestions/hello_all_questions/cabbooking/model/Location.class
 com/conceptcoding/interviewquestions/hello_all_questions/logger/model/LogLevel.class
 com/conceptcoding/interviewquestions/hello_all_questions/urlshortener/UrlShortener.class

@@ -319,9 +319,6 @@
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/ElevatorController.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/ElevatorDriver.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/Direction.java
-/Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/Request.java
-/Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/model/RequestType.java
-/Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/strategy/DirectionAwareDispatchStrategy.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/strategy/DispatchStrategy.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/elevator/strategy/NearestDispatchStrategy.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/filesystem/FileSystem.java

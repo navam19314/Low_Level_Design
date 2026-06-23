@@ -1,60 +1,58 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.elevator;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.elevator.model.Request;
-import com.conceptcoding.interviewquestions.hello_all_questions.elevator.model.RequestType;
-import com.conceptcoding.interviewquestions.hello_all_questions.elevator.strategy.DirectionAwareDispatchStrategy;
+import com.conceptcoding.interviewquestions.hello_all_questions.elevator.model.Direction;
 import com.conceptcoding.interviewquestions.hello_all_questions.elevator.strategy.DispatchStrategy;
+import com.conceptcoding.interviewquestions.hello_all_questions.elevator.strategy.NearestDispatchStrategy;
 
 import java.util.List;
 
-/**
- * Single-threaded by contract: one caller invokes {@link #step()} and {@link #requestElevator}.
+/*
+ * ElevatorController — facade over all elevators.
  *
- * <p>For multi-threaded use (hall calls arriving on a separate thread from the tick loop) the
- * minimal fix is method-level {@code synchronized} on both. The higher-throughput option is the
- * inbox pattern: hall calls enqueue {@code Request}s onto a {@code ConcurrentLinkedQueue} per
- * elevator; the step thread drains the inbox at the top of each {@code step()} and runs SCAN
- * against state only it mutates — no locks needed.
+ * Two entry points (from old code — useful distinction to mention in interview):
+ *   requestPickup(floor, direction) — hall call: someone on a floor pressing UP/DOWN
+ *   selectFloor(elevatorId, floor)  — in-cab button: passenger already inside
+ *
+ * step() advances the whole system by one tick (each elevator moves to its next stop).
  */
 public class ElevatorController {
 
-    private final List<Elevator> elevators;
-    private final int minFloor;
-    private final int maxFloor;
+    private final List<Elevator>   elevators;
     private final DispatchStrategy dispatchStrategy;
 
-    public ElevatorController(List<Elevator> elevators, int minFloor, int maxFloor) {
-        this(elevators, minFloor, maxFloor, new DirectionAwareDispatchStrategy());
+    public ElevatorController(List<Elevator> elevators) {
+        this(elevators, new NearestDispatchStrategy());
     }
 
-    public ElevatorController(List<Elevator> elevators, int minFloor, int maxFloor,
-                              DispatchStrategy dispatchStrategy) {
-        this.elevators = elevators;
-        this.minFloor = minFloor;
-        this.maxFloor = maxFloor;
+    public ElevatorController(List<Elevator> elevators, DispatchStrategy dispatchStrategy) {
+        this.elevators        = elevators;
         this.dispatchStrategy = dispatchStrategy;
     }
 
-    public List<Elevator> getElevators() {
-        return elevators;
+    // Hall call — dispatch to best elevator via strategy
+    public void requestPickup(int floor, Direction direction) {
+        Elevator best = dispatchStrategy.select(elevators, floor, direction);
+        if (best != null) best.addStop(floor);
     }
 
-    // Hall-call entry point. Validates floor range and that the type is a HALL call
-    // (DESTINATION belongs inside the cab via elevator.addRequest, not here).
-    public boolean requestElevator(int floor, RequestType type) {
-        if (floor < minFloor || floor > maxFloor) return false;
-        if (type == RequestType.DESTINATION)      return false;
-
-        Request request = new Request(floor, type);
-        Elevator best = dispatchStrategy.select(elevators, request);
-        if (best == null) return false;
-        return best.addRequest(request);
+    // In-cab button — goes directly to the specific elevator (1-indexed id)
+    public void selectFloor(int elevatorId, int floor) {
+        elevators.stream()
+                 .filter(e -> e.getId() == elevatorId)
+                 .findFirst()
+                 .ifPresent(e -> e.addStop(floor));
     }
 
-    // Tick the whole system. Each elevator runs SCAN independently.
+    // Advance all elevators by one step
     public void step() {
         for (Elevator e : elevators) {
-            e.step();
+            int stopped = e.step();
+            if (stopped != -1) {
+                System.out.println("  Elevator-" + e.getId() + " stopped at floor " + stopped
+                        + "  [" + e.getDirection() + "]");
+            }
         }
     }
+
+    public List<Elevator> getElevators() { return elevators; }
 }

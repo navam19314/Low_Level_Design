@@ -1,18 +1,12 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.elevator.strategy;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.elevator.Elevator;
-import com.conceptcoding.interviewquestions.hello_all_questions.elevator.model.Request;
+import com.conceptcoding.interviewquestions.hello_all_questions.elevator.model.Direction;
 
 import java.util.List;
 
-/**
- * How to pick which elevator services an inbound hall call.
- * Pluggable so dispatch can range from naive nearest-elevator (good only when
- * everyone is idle) to direction-aware (production default) to least-busy or
- * future ML-driven approaches — without touching the Elevator or Controller.
- */
 public interface DispatchStrategy {
-
-    /** Returns the elevator that should service the request, or null if none can. */
-    Elevator select(List<Elevator> elevators, Request request);
+    // Pick the best elevator for a hall call at floor in the given direction.
+    // Returns null if no elevator is available.
+    Elevator select(List<Elevator> elevators, int floor, Direction direction);
 }
