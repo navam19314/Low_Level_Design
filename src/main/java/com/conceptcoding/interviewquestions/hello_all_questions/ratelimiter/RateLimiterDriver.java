@@ -7,6 +7,9 @@ import com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.mode
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -16,10 +19,47 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RateLimiterDriver {
 
     public static void main(String[] args) throws Exception {
+        scenarioConfigDriven();   // production-style config-map API
         scenarioTokenBucket();
         scenarioSlidingWindowLog();
         scenarioMultiEndpoint();
         scenarioConcurrentBurst();
+    }
+
+    // Shows the config-driven constructor — matches what an API gateway does at startup
+    private static void scenarioConfigDriven() {
+        System.out.println("=== Config-driven constructor (API gateway style) ===");
+
+        // Each endpoint config mirrors what an external config service would send
+        Map<String, Object> searchAlgoConfig = new HashMap<>();
+        searchAlgoConfig.put("capacity", 3);
+        searchAlgoConfig.put("refillRatePerSecond", 1);
+        Map<String, Object> searchConfig = new HashMap<>();
+        searchConfig.put("endpoint", "/search");
+        searchConfig.put("algorithm", "TokenBucket");
+        searchConfig.put("algoConfig", searchAlgoConfig);
+
+        Map<String, Object> uploadAlgoConfig = new HashMap<>();
+        uploadAlgoConfig.put("maxRequests", 2);
+        uploadAlgoConfig.put("windowMs", 60_000L);
+        Map<String, Object> uploadConfig = new HashMap<>();
+        uploadConfig.put("endpoint", "/upload");
+        uploadConfig.put("algorithm", "SlidingWindowLog");
+        uploadConfig.put("algoConfig", uploadAlgoConfig);
+
+        Map<String, Object> defaultAlgoConfig = new HashMap<>();
+        defaultAlgoConfig.put("capacity", 10);
+        defaultAlgoConfig.put("refillRatePerSecond", 1);
+        Map<String, Object> defaultConfig = new HashMap<>();
+        defaultConfig.put("algorithm", "TokenBucket");
+        defaultConfig.put("algoConfig", defaultAlgoConfig);
+
+        RateLimiter rl = new RateLimiter(List.of(searchConfig, uploadConfig), defaultConfig);
+
+        System.out.println("  /search  → " + rl.allow("alice", "/search"));
+        System.out.println("  /upload  → " + rl.allow("alice", "/upload"));
+        System.out.println("  /unknown → " + rl.allow("alice", "/unknown") + "  (falls back to default)");
+        System.out.println();
     }
 
     // capacity=5, refill=1/s — burst, deplete, deny, refill

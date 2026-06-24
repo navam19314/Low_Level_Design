@@ -157,6 +157,7 @@ com/conceptcoding/interviewquestions/hello_all_questions/snakeladder/Board.class
 com/conceptcoding/interviewquestions/hello_all_questions/chess/piece/Piece.class
 com/conceptcoding/interviewquestions/hello_all_questions/movieticket/exception/SeatUnavailableException.class
 com/conceptcoding/interviewquestions/hello_all_questions/cabbooking/CabBookingDriver.class
+com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/algorithm/LimiterFactory.class
 com/conceptcoding/interviewquestions/hello_all_questions/snakeladder/Dice.class
 com/conceptcoding/interviewquestions/hello_all_questions/jobscheduler/listener/JobListener.class
 com/conceptcoding/interviewquestions/hello_all_questions/splitwise/splittype/SplitStrategy.class

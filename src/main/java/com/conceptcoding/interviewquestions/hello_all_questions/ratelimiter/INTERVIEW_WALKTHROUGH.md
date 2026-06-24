@@ -122,21 +122,23 @@ Out of Scope: distributed/Redis, hot-reload config, metrics, persistence
 
 ## Step 2 — Entities (~4 min)
 
-**Four things, name them:**
+**Five things, name them:**
 
 ```
 RateLimiter          orchestrator + facade — the only class callers touch
+LimiterFactory       creates the right Limiter from raw config data
 Limiter              Strategy interface — allow(clientId) → RateLimitResult
 TokenBucketLimiter   concrete algorithm #1
 SlidingWindowLog     concrete algorithm #2
 RateLimitResult      value object — (allowed, remaining, retryAfterMs)
 ```
 
-**Why no `LimiterConfig` or `LimiterFactory`?**
-> "For this scope, limiters are wired directly: `rl.register("/search", new TokenBucketLimiter(100, 10))`. If config comes from YAML with a discriminator field like `algorithm: TokenBucket`, I'd add a Factory — that's a Step 5 answer."
+**Why `LimiterFactory`?**
+> "Config arrives as raw JSON — `{ algorithm: 'TokenBucket', algoConfig: { capacity: 100, ... } }`. Something needs to read the algorithm discriminator and call the right constructor. That's the factory. Without it, that switch lives inside `RateLimiter` which violates single responsibility."
 
 **Relationships:**
 ```
+RateLimiter  --uses-->  LimiterFactory at construction time
 RateLimiter  --owns-->  Map<String, Limiter>   (endpoint → limiter)
 RateLimiter  --owns-->  Limiter defaultLimiter
 Each Limiter --owns-->  ConcurrentHashMap<String, PerKeyState>
@@ -153,10 +155,16 @@ public class RateLimiter {
     private final Map<String, Limiter> limiters = new HashMap<>();
     private final Limiter defaultLimiter;
 
-    public RateLimiter(Limiter defaultLimiter) { this.defaultLimiter = defaultLimiter; }
-
-    // call at startup, before serving traffic
-    public void register(String endpoint, Limiter limiter) { limiters.put(endpoint, limiter); }
+    // Config-driven constructor — takes raw JSON-like config, delegates creation to factory
+    public RateLimiter(List<Map<String, Object>> configs, Map<String, Object> defaultConfig) {
+        LimiterFactory factory = new LimiterFactory();
+        for (Map<String, Object> config : configs) {
+            String endpoint = (String) config.get("endpoint");
+            if (endpoint == null) continue;
+            limiters.put(endpoint, factory.create(config));
+        }
+        this.defaultLimiter = factory.create(defaultConfig);
+    }
 
     public RateLimitResult allow(String clientId, String endpoint) {
         Limiter limiter = limiters.getOrDefault(endpoint, defaultLimiter);
@@ -164,6 +172,32 @@ public class RateLimiter {
     }
 }
 ```
+
+### LimiterFactory
+
+```java
+public class LimiterFactory {
+    public Limiter create(Map<String, Object> externalConfig) {
+        String algorithm = (String) externalConfig.get("algorithm");
+        Map<String, Object> algoConfig = (Map<String, Object>) externalConfig.get("algoConfig");
+
+        switch (algorithm) {
+            case "TokenBucket":
+                return new TokenBucketLimiter(
+                        (int) algoConfig.get("capacity"),
+                        (int) algoConfig.get("refillRatePerSecond"));
+            case "SlidingWindowLog":
+                return new SlidingWindowLogLimiter(
+                        (int) algoConfig.get("maxRequests"),
+                        ((Number) algoConfig.get("windowMs")).longValue());
+            default:
+                throw new IllegalArgumentException("Unknown algorithm: " + algorithm);
+        }
+    }
+}
+```
+
+New algorithm = new class + one new `case`. `RateLimiter` and all existing algorithms never change.
 
 ### Limiter (Strategy interface)
 
@@ -216,17 +250,18 @@ public class SlidingWindowLogLimiter implements Limiter {
 public class RateLimitResult {
     private final boolean allowed;
     private final int remaining;
-    private final long retryAfterMs;  // -1 if allowed
+    private final Long retryAfterMs;  // null when allowed
 
-    public static RateLimitResult allow(int remaining)    { return new RateLimitResult(true,  remaining, -1); }
+    public static RateLimitResult allow(int remaining)    { return new RateLimitResult(true,  remaining, null); }
     public static RateLimitResult deny(long retryAfterMs) { return new RateLimitResult(false, 0, retryAfterMs); }
     // getters
 }
 ```
 
 **Patterns to name here:**
-- **Strategy** — `Limiter` interface. Different algorithms swap in without touching `RateLimiter`. Mention in Step 2.
+- **Strategy** — `Limiter` interface. Different algorithms swap in without touching `RateLimiter` or `LimiterFactory`.
 - **Facade** — `RateLimiter` is the only class callers touch.
+- **Factory** — `LimiterFactory` centralises creation logic; callers never `new TokenBucketLimiter(...)` directly.
 
 ---
 
@@ -574,7 +609,7 @@ synchronized (clientId) { /* new String("alice") != "alice" — different monito
 
 ## 30-Second Summary
 
-> *"Four classes: RateLimiter (facade), Limiter (Strategy interface), TokenBucketLimiter, SlidingWindowLogLimiter. RateLimiter holds a Map of endpoint → Limiter plus a default; allow() looks up the right limiter and delegates. TokenBucket uses lazy refill — tokens as a double (partial refill is real), capped at capacity, ceil on retryAfterMs. SlidingWindowLog stores per-client timestamps in an ArrayDeque, evicts stale ones on each call — perfectly accurate but O(maxRequests) memory per client vs O(1) for Token Bucket. Thread safety: ConcurrentHashMap for the per-client map, synchronized on the Bucket for check-and-consume. Per-key locking — different clients never block each other. New algorithms slot in as new Limiter implementations; no changes to RateLimiter."*
+> *"Five classes: RateLimiter (facade), LimiterFactory (creates the right algorithm from raw config), Limiter (Strategy interface), TokenBucketLimiter, SlidingWindowLogLimiter. RateLimiter takes a list of JSON-like configs at startup; the factory reads the algorithm discriminator and builds the right limiter. allow() looks up the right limiter by endpoint and delegates. TokenBucket: lazy refill, tokens as double (partial refill is real), cap at capacity, ceil on retryAfterMs, retryAfterMs is null when allowed. SlidingWindowLog: ArrayDeque per client, evicts stale timestamps on each call — perfectly accurate but O(maxRequests) memory vs O(1). Thread safety: ConcurrentHashMap for per-client map, synchronized on the Bucket for check-and-consume — different clients never block each other. New algorithm = new Limiter class + one switch case. Everything else stays the same."*
 
 ---
 
@@ -582,12 +617,13 @@ synchronized (clientId) { /* new String("alice") != "alice" — different monito
 
 | File | Purpose |
 |------|---------|
-| `model/RateLimitResult.java` | Value object — allowed, remaining, retryAfterMs |
+| `model/RateLimitResult.java` | Value object — allowed, remaining, retryAfterMs (null when allowed) |
 | `algorithm/Limiter.java` | Strategy interface |
+| `algorithm/LimiterFactory.java` | Factory — reads algorithm discriminator, constructs the right Limiter |
 | `algorithm/TokenBucketLimiter.java` | Lazy refill, double tokens, per-key lock |
 | `algorithm/SlidingWindowLogLimiter.java` | ArrayDeque per client, lazy eviction |
-| `RateLimiter.java` | Facade — register() + allow() |
-| `RateLimiterDriver.java` | 4 scenarios: token bucket, sliding window, multi-endpoint, 50-thread burst |
+| `RateLimiter.java` | Facade — config-driven constructor + allow() |
+| `RateLimiterDriver.java` | 5 scenarios: config-driven, token bucket, sliding window, multi-endpoint, 50-thread burst |
 
 ```bash
 mvn -q compile exec:java \
