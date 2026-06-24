@@ -403,13 +403,11 @@
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processor/NetBankingProcessor.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processor/PaymentProcessor.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/paymentgateway/processor/UpiProcessor.java
-/Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/LimiterFactory.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/RateLimiter.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/RateLimiterDriver.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/algorithm/Limiter.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/algorithm/SlidingWindowLogLimiter.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/algorithm/TokenBucketLimiter.java
-/Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/model/LimiterConfig.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/ratelimiter/model/RateLimitResult.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/snakeladder/Board.java
 /Users/navam.chaurasia/Desktop/Navam/LLD/LLD_Interview_Questions/lld-lowleveldesign/src/main/java/com/conceptcoding/interviewquestions/hello_all_questions/snakeladder/Dice.java

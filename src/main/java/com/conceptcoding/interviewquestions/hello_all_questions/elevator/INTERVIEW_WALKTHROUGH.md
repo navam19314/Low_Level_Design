@@ -98,9 +98,9 @@ Pick the first tier that has a match.
 ```
 Functional Requirements:
 1. N elevators, M floors.
-2. Hall call: requestPickup(floor, UP/DOWN) — pressed outside elevator.
+2. Hall call: callElevator(floor, UP/DOWN) — pressed outside elevator.
 3. Destination: selectFloor(elevatorId, floor) — pressed inside elevator.
-4. Simulation: controller.step() advances all elevators one stop.
+4. Simulation: controller.advance() advances all elevators one stop.
 5. SCAN: serve floors in direction order; reverse at boundary.
 
 Out of Scope: capacity, door timing, emergency stop, UI, persistence.
@@ -120,7 +120,7 @@ DispatchStrategy     interface (Strategy pattern) — pluggable hall-call dispat
 ```
 
 **Why no `Request` class or `RequestType` enum?**
-> Hall calls need a direction (UP/DOWN). In-cab selections don't — a floor number is enough. The two operations have different APIs: `requestPickup(floor, direction)` vs `selectFloor(elevatorId, floor)`. No shared "Request" type needed; we'd just be wrapping an int.
+> Hall calls need a direction (UP/DOWN). In-cab selections don't — a floor number is enough. The two operations have different APIs: `callElevator(floor, direction)` vs `selectFloor(elevatorId, floor)`. No shared "Request" type needed; we'd just be wrapping an int.
 
 **Why no `Floor`, `Button`, `Passenger`?**
 > They have no managed state. A button press is an event — model the event as a method call, not the button.
@@ -159,7 +159,7 @@ public class ElevatorController {
     private final List<Elevator>   elevators;
     private final DispatchStrategy dispatchStrategy;
 
-    public void requestPickup(int floor, Direction direction)  // hall call
+    public void callElevator(int floor, Direction direction)  // hall call
     public void selectFloor(int elevatorId, int floor)         // in-cab button
     public void step()                                         // advance all elevators one tick
 }
@@ -235,10 +235,10 @@ public int step() {
 2. *"When upQueue runs out, we flip DOWN right there and take the next downQueue floor in the same tick — that's the SCAN reversal."*
 3. *"step() returns the floor it stopped at, or -1. The Controller can print/log each stop."*
 
-### 4.3 ElevatorController.requestPickup() + dispatch
+### 4.3 ElevatorController.callElevator() + dispatch
 
 ```java
-public void requestPickup(int floor, Direction direction) {
+public void callElevator(int floor, Direction direction) {
     Elevator best = dispatchStrategy.select(elevators, floor, direction);
     if (best != null) best.addStop(floor);
 }
@@ -291,19 +291,19 @@ step() tick 5: direction = DOWN; pollFirst = 2.  Returns 2.  [DOWN]
 
 **The problem in our current design:**
 
-Our `step()` loop is meant to be called by a single simulation thread. But in a real building, hall-call buttons (`requestPickup`) and in-cab buttons (`selectFloor`) can fire from any thread at any time — even while `step()` is running.
+Our `step()` loop is meant to be called by a single simulation thread. But in a real building, hall-call buttons (`callElevator`) and in-cab buttons (`selectFloor`) can fire from any thread at any time — even while `step()` is running.
 
 The race condition:
 ```
 Thread A (tick loop):    step() is inside Elevator.step(), reading upQueue
-Thread B (hall button):  requestPickup() calls addStop(), which writes to upQueue
+Thread B (hall button):  callElevator() calls addStop(), which writes to upQueue
                          → ConcurrentModificationException or corrupted TreeSet state
 ```
 
 **Fix 1 — Synchronized methods on Controller (simplest, mention this first)**
 
 ```java
-public synchronized void requestPickup(int floor, Direction direction) { ... }
+public synchronized void callElevator(int floor, Direction direction) { ... }
 public synchronized void selectFloor(int elevatorId, int floor)        { ... }
 public synchronized void step()                                         { ... }
 ```
@@ -312,7 +312,7 @@ One lock on the Controller serializes all access. Simple. Fine for a building wi
 
 **Fix 2 — Inbox queue per Elevator (better, mention if interviewer pushes)**
 
-The idea: `requestPickup` / `selectFloor` just drop a floor number into a thread-safe inbox. `step()` drains the inbox at the start of each tick into the TreeSets. The TreeSets are only ever touched by the step thread.
+The idea: `callElevator` / `selectFloor` just drop a floor number into a thread-safe inbox. `step()` drains the inbox at the start of each tick into the TreeSets. The TreeSets are only ever touched by the step thread.
 
 ```java
 public class Elevator {
@@ -343,7 +343,7 @@ Why this is better:
 
 **What to say in the interview:**
 
-> *"Our current design is single-threaded discrete ticks — that's the correct starting point for a 45-min round. If the interviewer asks about threads, I'd say: the race is between addStop (button press threads) and step (tick thread) both touching the same TreeSets. Simplest fix: synchronize requestPickup/selectFloor/step on the Controller. Better fix: per-elevator inbox — producers drop into a ConcurrentLinkedQueue, step drains it at tick start. TreeSets stay single-writer so no locks needed there. Same inbox-pattern as actor-model mailboxes."*
+> *"Our current design is single-threaded discrete ticks — that's the correct starting point for a 45-min round. If the interviewer asks about threads, I'd say: the race is between addStop (button press threads) and step (tick thread) both touching the same TreeSets. Simplest fix: synchronize callElevator/selectFloor/step on the Controller. Better fix: per-elevator inbox — producers drop into a ConcurrentLinkedQueue, step drains it at tick start. TreeSets stay single-writer so no locks needed there. Same inbox-pattern as actor-model mailboxes."*
 
 ---
 
@@ -361,7 +361,7 @@ Why this is better:
 
 ## 30-Second Summary (memorize this)
 
-> *"Three classes and one interface: ElevatorController, Elevator, Direction, and DispatchStrategy. Each Elevator is a state machine — IDLE/UP/DOWN — using two TreeSets: upQueue (ascending) for floors above, downQueue (descending) for floors below. step() runs SCAN: wake up if idle, pollFirst from the current-direction queue, flip direction when that queue empties. Controller's requestPickup delegates to an injected DispatchStrategy using 3-tier priority: moving-toward-and-approaching first, then nearest idle, then nearest overall. selectFloor goes straight to the specific elevator. Dispatch is pluggable via Strategy — different policies slot in without touching Elevator or Controller."*
+> *"Three classes and one interface: ElevatorController, Elevator, Direction, and DispatchStrategy. Each Elevator is a state machine — IDLE/UP/DOWN — using two TreeSets: upQueue (ascending) for floors above, downQueue (descending) for floors below. step() runs SCAN: wake up if idle, pollFirst from the current-direction queue, flip direction when that queue empties. Controller's callElevator delegates to an injected DispatchStrategy using 3-tier priority: moving-toward-and-approaching first, then nearest idle, then nearest overall. selectFloor goes straight to the specific elevator. Dispatch is pluggable via Strategy — different policies slot in without touching Elevator or Controller."*
 
 ---
 

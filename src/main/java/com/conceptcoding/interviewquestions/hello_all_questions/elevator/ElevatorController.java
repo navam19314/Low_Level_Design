@@ -10,10 +10,10 @@ import java.util.List;
  * ElevatorController — facade over all elevators.
  *
  * Two entry points (from old code — useful distinction to mention in interview):
- *   requestPickup(floor, direction) — hall call: someone on a floor pressing UP/DOWN
- *   selectFloor(elevatorId, floor)  — in-cab button: passenger already inside
+ *   callElevator(floor, direction)  — hall call: someone on a floor pressing UP/DOWN
+ *   selectFloor(elevatorId, floor) — in-cab button: passenger already inside
  *
- * step() advances the whole system by one tick (each elevator moves to its next stop).
+ * advance() advances the whole system by one unit of time (each elevator moves to its next stop).
  */
 public class ElevatorController {
 
@@ -29,26 +29,28 @@ public class ElevatorController {
         this.dispatchStrategy = dispatchStrategy;
     }
 
-    // Hall call — dispatch to best elevator via strategy
-    public void requestPickup(int floor, Direction direction) {
+    // Hall call — someone outside pressing UP or DOWN
+    public void callElevator(int floor, Direction direction) {
         Elevator best = dispatchStrategy.select(elevators, floor, direction);
         if (best != null) best.addStop(floor);
     }
 
-    // In-cab button — goes directly to the specific elevator (1-indexed id)
+    // In-cab button — goes directly to the specific elevator
     public void selectFloor(int elevatorId, int floor) {
-        elevators.stream()
-                 .filter(e -> e.getId() == elevatorId)
-                 .findFirst()
-                 .ifPresent(e -> e.addStop(floor));
+        for (Elevator e : elevators) {
+            if (e.getId() == elevatorId) {
+                e.addStop(floor);
+                return;
+            }
+        }
     }
 
-    // Advance all elevators by one step
-    public void step() {
+    // Advance all elevators by one unit of time
+    public void advance() {
         for (Elevator e : elevators) {
-            int stopped = e.step();
-            if (stopped != -1) {
-                System.out.println("  Elevator-" + e.getId() + " stopped at floor " + stopped
+            int stoppedAt = e.moveToNextStop();
+            if (stoppedAt != -1) {
+                System.out.println("  Elevator-" + e.getId() + " stopped at floor " + stoppedAt
                         + "  [" + e.getDirection() + "]");
             }
         }

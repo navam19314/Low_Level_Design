@@ -1,14 +1,12 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter;
 
+import com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.algorithm.SlidingWindowLogLimiter;
 import com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.algorithm.TokenBucketLimiter;
-import com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.model.LimiterConfig;
 import com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.model.RateLimitResult;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,87 +16,63 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RateLimiterDriver {
 
     public static void main(String[] args) throws Exception {
-        scenarioTokenBucketBasics();
+        scenarioTokenBucket();
         scenarioSlidingWindowLog();
-        scenarioMultiEndpointAndFallback();
+        scenarioMultiEndpoint();
         scenarioConcurrentBurst();
     }
 
-    // ---- Scenario 1: Token-bucket basics — burst, deplete, retry math --------
-    private static void scenarioTokenBucketBasics() {
-        System.out.println("=== Scenario 1: TokenBucket — capacity=5, refill=1/s ===");
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+    // capacity=5, refill=1/s — burst, deplete, deny, refill
+    private static void scenarioTokenBucket() {
+        System.out.println("=== TokenBucket: capacity=5, refill=1/s ===");
+        MutableClock clock = new MutableClock(0);
         TokenBucketLimiter tb = new TokenBucketLimiter(5, 1, clock);
 
-        // Five rapid hits — all should succeed (initial bucket is full).
         for (int i = 1; i <= 5; i++) {
-            RateLimitResult r = tb.allow("alice");
-            System.out.printf("  req %d : allowed=%s remaining=%d retryAfterMs=%s%n",
-                    i, r.allowed(), r.remaining(), r.retryAfterMs());
+            System.out.printf("  req %d → %s%n", i, tb.allow("alice"));
         }
+        System.out.println("  req 6 → " + tb.allow("alice") + "  (expect DENY retryAfterMs=1000)");
 
-        // 6th must fail; retryAfterMs should be ~1000 (1 token / 1 per-sec).
-        RateLimitResult denied = tb.allow("alice");
-        System.out.printf("  req 6 : allowed=%s remaining=%d retryAfterMs=%s  (expect ~1000)%n",
-                denied.allowed(), denied.remaining(), denied.retryAfterMs());
-
-        // Advance 1.5s → 1.5 tokens refilled → 1 more request succeeds.
-        clock.advanceMillis(1500);
-        RateLimitResult afterRefill = tb.allow("alice");
-        System.out.printf("  +1.5s : allowed=%s remaining=%d (expect 0 — 0.5 tokens left)%n",
-                afterRefill.allowed(), afterRefill.remaining());
+        clock.advanceMs(1500);
+        System.out.println("  +1500ms → " + tb.allow("alice") + "  (expect ALLOW remaining=0)");
         System.out.println();
     }
 
-    // ---- Scenario 2: Sliding-window-log — exact accuracy --------
+    // 3 reqs per 1000ms — fill, deny, advance past window
     private static void scenarioSlidingWindowLog() {
-        System.out.println("=== Scenario 2: SlidingWindowLog — 3 reqs / 1000ms ===");
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
-        var swl = new com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.algorithm
-                .SlidingWindowLogLimiter(3, 1000L, clock);
+        System.out.println("=== SlidingWindowLog: 3 reqs / 1000ms ===");
+        MutableClock clock = new MutableClock(0);
+        SlidingWindowLogLimiter swl = new SlidingWindowLogLimiter(3, 1000L, clock);
 
-        // 3 requests fit; 4th must fail.
-        for (int i = 1; i <= 3; i++) System.out.printf("  req %d allowed=%s%n", i, swl.allow("bob").allowed());
-        RateLimitResult denied = swl.allow("bob");
-        System.out.printf("  req 4 allowed=%s retryAfterMs=%s (~1000ms — oldest must age out)%n",
-                denied.allowed(), denied.retryAfterMs());
+        for (int i = 1; i <= 3; i++) {
+            System.out.printf("  req %d → %s%n", i, swl.allow("bob"));
+        }
+        System.out.println("  req 4 → " + swl.allow("bob") + "  (expect DENY)");
 
-        // Advance past the window → all old timestamps age out.
-        clock.advanceMillis(1001);
-        RateLimitResult fresh = swl.allow("bob");
-        System.out.printf("  +1001ms allowed=%s remaining=%d (expect 2 — slate is clean)%n",
-                fresh.allowed(), fresh.remaining());
+        clock.advanceMs(1001);
+        System.out.println("  +1001ms → " + swl.allow("bob") + "  (expect ALLOW remaining=2)");
         System.out.println();
     }
 
-    // ---- Scenario 3: multi-endpoint dispatch + default fallback --------
-    private static void scenarioMultiEndpointAndFallback() {
-        System.out.println("=== Scenario 3: multi-endpoint dispatch + default fallback ===");
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+    // register per-endpoint limiters; unknown endpoint falls back to default
+    private static void scenarioMultiEndpoint() {
+        System.out.println("=== Multi-endpoint + default fallback ===");
+        MutableClock clock = new MutableClock(0);
 
-        LimiterConfig searchCfg = new LimiterConfig(
-                "/search", "TokenBucket",
-                Map.of("capacity", 100, "refillRatePerSecond", 10));
-        LimiterConfig uploadCfg = new LimiterConfig(
-                "/upload", "SlidingWindowLog",
-                Map.of("maxRequests", 5, "windowMs", 60_000L));
-        LimiterConfig defaultCfg = new LimiterConfig(
-                null, "TokenBucket",
-                Map.of("capacity", 10, "refillRatePerSecond", 1));
+        RateLimiter rl = new RateLimiter(new TokenBucketLimiter(10, 1, clock));
+        rl.register("/search", new TokenBucketLimiter(100, 10, clock));
+        rl.register("/upload", new SlidingWindowLogLimiter(5, 60_000L, clock));
 
-        RateLimiter limiter = new RateLimiter(List.of(searchCfg, uploadCfg), defaultCfg, clock);
-
-        System.out.println("  /search   → " + limiter.allow("client-1", "/search"));      // TokenBucket(100, 10)
-        System.out.println("  /upload   → " + limiter.allow("client-1", "/upload"));      // SlidingWindowLog(5, 60s)
-        System.out.println("  /unknown  → " + limiter.allow("client-1", "/unknown"));     // falls back to default
+        System.out.println("  /search  → " + rl.allow("client-1", "/search"));
+        System.out.println("  /upload  → " + rl.allow("client-1", "/upload"));
+        System.out.println("  /unknown → " + rl.allow("client-1", "/unknown") + "  (default limiter)");
         System.out.println();
     }
 
-    // ---- Scenario 4: concurrent burst — 50 threads, frozen clock, capacity 10 --------
-    // With per-key locking → exactly 10 should win. Without it, race → wrong count.
+    // 50 threads race for capacity=10 — per-key locking means exactly 10 win
     private static void scenarioConcurrentBurst() throws Exception {
-        System.out.println("=== Scenario 4: 50 threads, frozen clock, capacity=10 ===");
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        System.out.println("=== Concurrent burst: 50 threads, capacity=10 ===");
+        MutableClock clock = new MutableClock(0); // frozen — no refill between threads
         TokenBucketLimiter limiter = new TokenBucketLimiter(10, 1, clock);
 
         int threads = 50;
@@ -106,44 +80,33 @@ public class RateLimiterDriver {
         AtomicInteger denied  = new AtomicInteger();
 
         ExecutorService pool = Executors.newFixedThreadPool(threads);
-        CountDownLatch ready = new CountDownLatch(threads);
-        CountDownLatch fire  = new CountDownLatch(1);
+        CountDownLatch fire = new CountDownLatch(1);
 
         for (int i = 0; i < threads; i++) {
             pool.submit(() -> {
-                ready.countDown();
-                try {
-                    fire.await();
-                    RateLimitResult r = limiter.allow("shared-client");
-                    if (r.allowed()) allowed.incrementAndGet();
-                    else             denied.incrementAndGet();
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
+                try { fire.await(); } catch (InterruptedException e) { return; }
+                if (limiter.allow("shared").isAllowed()) allowed.incrementAndGet();
+                else                                     denied.incrementAndGet();
             });
         }
 
-        ready.await();
         fire.countDown();
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.SECONDS);
 
-        System.out.println("  allowed = " + allowed.get() + "   (expect exactly 10)");
-        System.out.println("  denied  = " + denied.get()  + "   (expect exactly 40)");
-        System.out.println("  total   = " + (allowed.get() + denied.get()) + " (expect 50)");
-        System.out.println(allowed.get() == 10 && denied.get() == 40
-                ? "  per-key locking holds ✓"
-                : "  ✗ RACE — counts don't match!");
+        System.out.println("  allowed = " + allowed.get() + "  (expect 10)");
+        System.out.println("  denied  = " + denied.get()  + "  (expect 40)");
+        System.out.println(allowed.get() == 10 ? "  per-key locking ✓" : "  RACE CONDITION ✗");
     }
 
-    /** Mutable clock with no auto-advance — drives deterministic tests. */
+    // Controllable clock — lets us simulate time passing without Thread.sleep
     static final class MutableClock extends Clock {
-        private volatile Instant now;
-        MutableClock(Instant start) { this.now = start; }
-        @Override public Instant instant()      { return now; }
-        @Override public long millis()          { return now.toEpochMilli(); }
-        @Override public ZoneId getZone()       { return ZoneId.of("UTC"); }
+        private long nowMs;
+        MutableClock(long startMs)           { this.nowMs = startMs; }
+        void advanceMs(long ms)              { nowMs += ms; }
+        @Override public long millis()       { return nowMs; }
+        @Override public Instant instant()   { return Instant.ofEpochMilli(nowMs); }
+        @Override public ZoneId getZone()    { return ZoneId.of("UTC"); }
         @Override public Clock withZone(ZoneId z) { return this; }
-        void advanceMillis(long ms) { now = now.plusMillis(ms); }
     }
 }

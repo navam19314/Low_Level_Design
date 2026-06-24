@@ -15,14 +15,14 @@ import java.util.TreeSet;
  * SCAN: exhaust upQueue going UP, flip DOWN and exhaust downQueue, repeat.
  * TreeSet gives sorted order for free — no manual sorting, no index tracking.
  *
- * step() jumps to the next queued stop (one stop per tick).
+ * moveToNextStop() jumps to the next queued stop (one stop per tick).
  * Returns the floor stopped at, or -1 when idle.
  */
 public class Elevator {
 
     private final int id;
     private int currentFloor;
-    private Direction direction;
+    private Direction direction ;
 
     private final TreeSet<Integer> upQueue   = new TreeSet<>();
     private final TreeSet<Integer> downQueue = new TreeSet<>(Comparator.reverseOrder());
@@ -40,9 +40,9 @@ public class Elevator {
         else if (floor < currentFloor) downQueue.add(floor);
     }
 
-    // One SCAN step: move to the next pending stop in the current direction.
-    // Returns floor reached, or -1 if no pending work.
-    public int step() {
+    // Move to the next pending stop in the current direction (SCAN).
+    // Returns floor reached, or -1 if idle.
+    public int moveToNextStop() {
         if (direction == Direction.IDLE) {
             if      (!upQueue.isEmpty())   direction = Direction.UP;
             else if (!downQueue.isEmpty()) direction = Direction.DOWN;
