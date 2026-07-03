@@ -121,13 +121,33 @@ Circular: A→B $10, B→C $10, C→A $10
 
 ## Step 1 — Requirements (5 min)
 
-**Ask the interviewer:**
-- Split types needed — equal / exact / percentage?
-- Should percentage work for 33.33%? (This forces basis-points answer.)
-- Do we need debt simplification / settlement?
-- Concurrent adds from multiple users?
+### Clarifying-questions dialogue (do this before writing anything)
 
-**State out loud:**
+**You:** *"Split types — equal only, or equal + exact + percentage?"*
+**Interviewer:** *"All three."*
+> Forces Strategy pattern from day 1.
+
+**You:** *"Should percentage handle non-integer shares like 33.33%?"*
+**Interviewer:** *"Yes, it should be exact."*
+> This is the trap question. If you use `double percent`, you fail. Answer: basis points (10000 = 100%, 33.33% = 3333).
+
+**You:** *"Do we need debt simplification — collapsing chains and cycles into fewer settlements — or just pairwise balance queries?"*
+**Interviewer:** *"Both. Simplification is the interesting part."*
+> Signals that greedy simplification with two heaps is expected. This is the senior-signal component.
+
+**You:** *"Multi-currency, or single currency for v1?"*
+**Interviewer:** *"Single. Assume everything is in one currency."*
+> Simplification. FX becomes a Step 5 extension.
+
+**You:** *"Thread-safe under concurrent addExpense calls?"*
+**Interviewer:** *"Yes, but keep it simple."*
+> Signals coarse-grained `synchronized` is fine. Don't over-engineer with per-user locks unless asked.
+
+**You:** *"Groups (like a trip or apartment) as a first-class entity, or just participants per expense?"*
+**Interviewer:** *"Just participants for v1."*
+> No `Group` class. Group becomes a Step 5 extension.
+
+### Then state out loud:
 
 ```
 IN SCOPE
@@ -202,21 +222,46 @@ OUT OF SCOPE
 ```java
 // ExpenseManager — write this outline on the board
 public class ExpenseManager {
-    private final Map<String, User>                  users      = new HashMap<>();
-    private final List<Expense>                      expenses   = new ArrayList<>();
-    private final Map<String, Map<String, Long>>     balances   = new HashMap<>();
-    private final Map<SplitType, SplitStrategy>      strategies;
+    private final Map<String, User>              users    = new HashMap<>();
+    private final List<Expense>                  expenses = new ArrayList<>();
+    private final Map<String, Map<String, Long>> balances = new HashMap<>();
 
-    public synchronized void          addUser(User user);
-    public synchronized Expense       addExpense(String paidById, long totalCents,
-                                                 SplitType type,
-                                                 Map<String, Long> inputs,
-                                                 String description);
-    public synchronized long          getBalance(String u1, String u2);
-    public synchronized long          getNetBalance(String userId);
+    // Wire the strategies at construction — no if-else on SplitType later
+    private final Map<SplitType, SplitStrategy>  strategies = Map.of(
+            SplitType.EQUAL,   new EqualSplitStrategy(),
+            SplitType.EXACT,   new ExactSplitStrategy(),
+            SplitType.PERCENT, new PercentSplitStrategy()
+    );
+
+    public synchronized void             addUser(User user);
+    public synchronized Expense          addExpense(String paidById, long totalCents,
+                                                    SplitType type,
+                                                    Map<String, Long> inputs,
+                                                    String description);
+    public synchronized long             getBalance(String u1, String u2);
+    public synchronized long             getNetBalance(String userId);
     public synchronized List<Settlement> simplifyDebts();
+
+    // Internal helpers — one place to touch balances, keeps addOwed clean
+    private void addOwed(String creditor, String debtor, long amount);
+    private long getStored(String creditor, String debtor);        // 0 if absent
+    private void setStored(String creditor, String debtor, long amount);
 }
 ```
+
+**Two small helpers do a lot of work:**
+
+```java
+private long getStored(String creditor, String debtor) {
+    return balances.getOrDefault(creditor, Map.of()).getOrDefault(debtor, 0L);
+}
+
+private void setStored(String creditor, String debtor, long amount) {
+    balances.computeIfAbsent(creditor, k -> new HashMap<>()).put(debtor, amount);
+}
+```
+
+> *"These two encapsulate the nested-map dance. Every other method reads and writes balances through them — no `.get().get()` chains scattered around, no NullPointerExceptions when a user's row doesn't exist yet."*
 
 ### SplitStrategy interface
 
@@ -353,16 +398,209 @@ Naïve would have been 3 settlements. Greedy wins.
 
 ## Step 5 — Extensibility (7 min)
 
-Offer these before the interviewer asks.
+Offer these before the interviewer asks. Depth of the answer scales with seniority — junior candidates name the pattern, seniors sketch code.
 
-| Follow-up | Pattern | One-line answer |
-|-----------|---------|-----------------|
-| Notify users on expense add | **Observer** | `ExpenseListener` interface; SMS/email/push register independently |
-| Multi-currency (USD + INR on a trip) | **Strategy** | `FxRateProvider` interface — historical rate vs. spot rate as two impls |
-| Different simplification algorithms | **Strategy** | `SimplificationStrategy` — `GreedyStrategy` default, `OptimalStrategy` NP-hard opt-in |
-| Persist across restart | **Repository** | `ExpenseRepository` — write on every add, replay on boot to rebuild balances |
-| Groups (Flat, Trip, Office) | Promote `Group` entity | Group owns its own ledger + balance graph; `ExpenseManager` routes by groupId |
-| Partial settlement mid-trip | `recordSettlement()` | Treat a payment as a reverse expense — same `addOwed` call with roles swapped |
+### E1. "Add a new split type — say, ShareSplit (1 share / 2 shares / 3 shares)"
+
+**Pattern:** Strategy — the whole reason we built the interface.
+
+```java
+public class ShareSplitStrategy implements SplitStrategy {
+    // participantInputs value = number of shares (e.g. {A: 1, B: 2, C: 1})
+    @Override
+    public List<Split> calculate(long totalAmountCents, Map<String, Long> participantInputs) {
+        long totalShares = 0;
+        for (long s : participantInputs.values()) totalShares += s;
+
+        List<String> users = new ArrayList<>(participantInputs.keySet());
+        List<Split> splits = new ArrayList<>();
+        long accumulated = 0;
+        for (int i = 0; i < users.size() - 1; i++) {
+            long amount = (totalAmountCents * participantInputs.get(users.get(i))) / totalShares;
+            splits.add(new Split(users.get(i), amount));
+            accumulated += amount;
+        }
+        splits.add(new Split(users.get(users.size() - 1), totalAmountCents - accumulated));
+        return splits;
+    }
+}
+```
+
+Then: add `SplitType.SHARE` to the enum, one entry to the strategies map. `ExpenseManager` and other strategies are untouched. That's the Strategy pattern earning its keep.
+
+---
+
+### E2. "Notify users when an expense is added (email / SMS / push)"
+
+**Pattern:** Observer.
+
+```java
+public interface ExpenseListener {
+    void onExpenseAdded(Expense expense);
+}
+
+// In ExpenseManager
+private final List<ExpenseListener> listeners = new ArrayList<>();
+
+public void register(ExpenseListener listener) { listeners.add(listener); }
+
+// At the end of addExpense, after everything commits:
+for (ExpenseListener l : listeners) l.onExpenseAdded(expense);
+```
+
+Then plug in as many independent listeners as you want:
+
+```java
+manager.register(new EmailNotifier(smtpClient));
+manager.register(new PushNotifier(fcmClient));
+manager.register(new AuditLogger(kafkaProducer));
+```
+
+**Say aloud:** *"Fire listeners AFTER the balance graph and ledger commit, so a listener failure never corrupts state. In production I'd also make notification async — dump onto a queue, don't block the addExpense caller on SMTP."*
+
+---
+
+### E3. "Multi-currency — a trip has USD dinners and INR taxi rides"
+
+**Pattern:** Value object for money + Strategy for FX conversion.
+
+```java
+public class Money {
+    private final long amountMinorUnits;   // cents, paise, etc.
+    private final String currency;         // "USD", "INR"
+}
+
+public interface FxRateProvider {
+    // rate from src → dst at a specific point in time
+    double rate(String src, String dst, LocalDateTime when);
+}
+```
+
+Two implementations:
+- `SpotRateProvider` — always uses today's rate. Simple.
+- `HistoricalRateProvider` — uses the rate on the day the expense was recorded. Fair for long trips.
+
+**Say aloud:** *"Money becomes a value object with amount + currency. Every balance is stored in a canonical currency — say USD — using the FX rate at expense-creation time. The Strategy pattern applies twice here: split strategies AND FX rate strategies. Multiple orthogonal axes of variation is exactly what Strategy is designed for."*
+
+---
+
+### E4. "Persist across restart — restore balances after a crash"
+
+**Pattern:** Repository + event sourcing.
+
+```java
+public interface ExpenseRepository {
+    void save(Expense expense);
+    List<Expense> loadAll();
+}
+```
+
+Two options, both worth naming:
+
+**Option A: Persist balances directly.** Fast to load, but you have to persist on every write and keep it consistent with the ledger. Two sources of truth is a bug factory.
+
+**Option B: Event source — persist only expenses; rebuild balances on boot by replaying them.**
+
+```java
+public ExpenseManager(ExpenseRepository repo) {
+    this.repo = repo;
+    for (Expense e : repo.loadAll()) {
+        expenses.add(e);
+        for (Split s : e.getSplits()) {
+            if (!s.getUserId().equals(e.getPaidById())) {
+                addOwed(e.getPaidById(), s.getUserId(), s.getAmountCents());
+            }
+        }
+    }
+}
+```
+
+**Say aloud:** *"I'd event-source it — expenses are the source of truth, balances are a derived cache. On boot, replay expenses to rebuild balances. This means a bug in `addOwed` can be fixed and re-run against history, and I don't have to keep two stores in sync on every write."*
+
+---
+
+### E5. "Groups (Trip to Goa, Flat 302, Office Coffee)"
+
+**Pattern:** Promote `Group` to a first-class entity. Each group owns its own ledger and balance graph.
+
+```java
+public class Group {
+    private final String id;
+    private final String name;
+    private final Set<String> memberIds;
+    private final ExpenseManager ledger = new ExpenseManager();   // per-group ledger
+}
+
+// The system-level manager becomes a router
+public class Splitwise {
+    private final Map<String, Group> groups = new HashMap<>();
+    public Expense addExpense(String groupId, String paidById, ...) {
+        return groups.get(groupId).ledger.addExpense(paidById, ...);
+    }
+}
+```
+
+**Say aloud:** *"Each group is a sandbox — balances in Group A never leak into Group B. That's a real product requirement, not just structure. `ExpenseManager` becomes reusable per-group, and a top-level `Splitwise` class routes to the right one."*
+
+---
+
+### E6. "Different simplification algorithms — someone wants provably minimum"
+
+**Pattern:** Strategy (again — same shape as split types).
+
+```java
+public interface SimplificationStrategy {
+    List<Settlement> simplify(Map<String, Long> netBalances);
+}
+
+public class GreedySimplification implements SimplificationStrategy { ... }
+public class OptimalSimplification implements SimplificationStrategy {
+    // NP-hard — reduces to subset-sum. Use only for small N (≤ 15).
+    // Falls back to greedy above that threshold.
+}
+```
+
+**Say aloud:** *"Simplification and split-calculation are two orthogonal strategies. Greedy is O(N log N) and gives at most N-1 settlements — good enough for a friend group. Optimal is NP-hard; only makes sense for tiny N. I'd expose it behind the same interface so the caller can pick."*
+
+---
+
+### E7. "Partial settlements — someone pays part of what they owe mid-trip"
+
+**Pattern:** Treat a settlement as a reverse expense — reuse `addOwed` with roles flipped.
+
+```java
+public synchronized Settlement recordSettlement(String debtorId, String creditorId, long amount) {
+    if (amount <= 0) throw new IllegalArgumentException("Amount must be > 0");
+    addOwed(debtorId, creditorId, amount);   // debtor is now the "creditor" of this virtual reverse-expense
+    return new Settlement(debtorId, creditorId, amount);
+}
+```
+
+**Say aloud:** *"A settlement is just an expense in reverse — `A pays B $30` reduces `A owes B` by $30, exactly like B originally covering an A-share for $30. The addOwed logic already cancels opposing balances correctly, so I just call it with the roles swapped. Zero new algorithm needed."*
+
+---
+
+### E8. Thread safety — deep dive (if interviewer digs in)
+
+**Current:** coarse-grained `synchronized` on every public method. Correct, but every `addExpense` blocks every `getBalance`.
+
+**Next level: per-user pair locks.**
+
+```java
+private final Map<String, Object> userLocks = new ConcurrentHashMap<>();
+
+private Object lockFor(String userId) {
+    return userLocks.computeIfAbsent(userId, k -> new Object());
+}
+
+// In addExpense — lock ALL involved users in a stable order to avoid deadlock
+List<String> allUsers = new ArrayList<>(participantInputs.keySet());
+allUsers.add(paidById);
+Collections.sort(allUsers);   // canonical order — same threads always acquire in the same order
+// then acquire nested locks in sorted order
+```
+
+**Say aloud:** *"Coarse-grained sync is correct and simple — I'd start there. If profiling showed lock contention on `balances`, I'd move to per-user locks acquired in a canonical order to prevent deadlock. This is the same pattern as a bank transfer between two accounts — sort account IDs, lock in order."*
 
 ---
 
@@ -401,6 +639,33 @@ Offer these before the interviewer asks.
 | Missing `synchronized` | Concurrent adds race on the balance map |
 | Adding `Group`, `Money`, `BalanceSheet` to v1 | Over-engineering. No requirement demands them. |
 | Skipping the dry-run | Greedy code without a walkthrough looks unverified |
+
+---
+
+## What is expected at each level
+
+### Junior (SDE-1)
+- Recognise that different split types need different logic → arrives at Strategy with a hint.
+- Correctly implement EQUAL split; may need a nudge on the "last-absorbs-remainder" trick.
+- May use `double` for money at first — should catch or fix it when the interviewer probes.
+- Pairwise `getBalance` works. Simplification usually skipped or half-attempted.
+- Thread safety often forgotten. Fine if added after prompt.
+
+### Mid-level (SDE-2) — this is the level most interviews target
+- Reaches Strategy for split types without prompting; all three strategies handle rounding correctly.
+- Money as `long` cents, percent as basis points — proposes this before it's asked.
+- `addOwed` normalizes the graph (never both directions positive) without hints.
+- Implements greedy simplification with two heaps. Names the tradeoff — *"greedy is not optimal, but optimal is NP-hard."*
+- Coarse-grained `synchronized`, calls it out as intentional.
+- Runs one dry-run out loud (chain collapse) without prompting.
+
+### Senior (SDE-3 / SDE-II at Amazon)
+- Everything mid-level does, faster, and with proactive tradeoff commentary.
+- Catches edge cases without prompting: payer as participant, self-debt, zero-amount settlements, integer overflow on massive totals.
+- Discusses multiple extensibility axes as orthogonal Strategies (split × FX × simplification).
+- Names concrete pattern when suggesting fixes (Observer, Repository, event sourcing) — not just "we could add a class for that."
+- Would move to per-user locks with canonical ordering if contention were the bottleneck, and can explain why sorted acquisition prevents deadlock.
+- Finishes with buffer. Uses buffer to discuss what they'd do differently in production (async notifications, DB-backed repo, distributed lock).
 
 ---
 

@@ -12,9 +12,21 @@ public class PercentSplitStrategy implements SplitStrategy {
 
     private static final long TOTAL_BPS = 10_000L;
 
+    // Given a bill and each participant's percentage (as basis points),
+    // return how much each person owes in cents.
+    //
+    // Example: totalAmountCents = 1000 ($10.00), participants = {A: 3333, B: 3333, C: 3334}
+    //   A owes (1000 * 3333) / 10000 = 333 cents
+    //   B owes (1000 * 3333) / 10000 = 333 cents
+    //   C absorbs the remainder = 1000 - 333 - 333 = 334 cents  → total = 1000 ✓
+    //
+    // Why bps instead of doubles? Money math with double leaks precision (0.1 + 0.2 = 0.30000000000000004).
+    // Using integers everywhere means totals ALWAYS reconcile to the cent.
     @Override
     public List<Split> calculate(long totalAmountCents, Map<String, Long> participantInputs) {
-        long sumBps = participantInputs.values().stream().mapToLong(Long::longValue).sum();
+        // Validate that percentages sum to exactly 100% before touching any money.
+        long sumBps = 0L;
+        for (long bps : participantInputs.values()) sumBps += bps;
         if (sumBps != TOTAL_BPS) {
             throw new IllegalArgumentException(
                     "PERCENT shares sum to " + sumBps + " bps, must equal " + TOTAL_BPS);
@@ -23,13 +35,18 @@ public class PercentSplitStrategy implements SplitStrategy {
         List<String> users = new ArrayList<>(participantInputs.keySet());
         List<Split> splits = new ArrayList<>();
         long accumulated = 0L;
+
+        // Assign amounts to everyone EXCEPT the last person.
+        // Integer division floors — e.g. (1000 * 3333) / 10000 truncates instead of rounding up.
+        // That means we may be a few cents short of the total; the last person picks up the slack.
         for (int i = 0; i < users.size() - 1; i++) {
             long bps    = participantInputs.get(users.get(i));
-            long amount = (totalAmountCents * bps) / TOTAL_BPS;  // floor — last absorbs remainder
+            long amount = (totalAmountCents * bps) / TOTAL_BPS;
             splits.add(new Split(users.get(i), amount));
             accumulated += amount;
         }
-        // last participant absorbs cent-level remainder so sum == total exactly
+
+        // Last participant absorbs the cent-level remainder so splits sum EXACTLY to total.
         splits.add(new Split(users.get(users.size() - 1), totalAmountCents - accumulated));
         return splits;
     }
