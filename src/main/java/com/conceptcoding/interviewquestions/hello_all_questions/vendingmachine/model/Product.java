@@ -1,14 +1,19 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.model;
 
-/**
- * Immutable product record. {@code slot} is the column code visible on the
- * machine ("A1", "B3", ...) — the user selects by slot, not by name.
- */
-public record Product(String slot, String name, int priceCents) {
+// Immutable product. slot ("A1", "B3") is the user-facing selector on the machine.
+public class Product {
 
-    public Product {
-        if (slot == null || slot.isBlank())  throw new IllegalArgumentException("slot required");
-        if (name == null || name.isBlank())  throw new IllegalArgumentException("name required");
-        if (priceCents <= 0)                  throw new IllegalArgumentException("priceCents must be > 0");
+    private final String slot;
+    private final String name;
+    private final int    priceCents;
+
+    public Product(String slot, String name, int priceCents) {
+        this.slot       = slot;
+        this.name       = name;
+        this.priceCents = priceCents;
     }
+
+    public String getSlot()       { return slot; }
+    public String getName()       { return name; }
+    public int    getPriceCents() { return priceCents; }
 }

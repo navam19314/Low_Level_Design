@@ -10,18 +10,11 @@ import com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.s
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Context class for the State pattern. Holds the current state + all the data
- * the states need (balance, inventory, stock counts) — but delegates ALL
- * behavior to the current state object.
- *
- * <p>The state OBJECTS themselves are stateless (just policy); they read and
- * mutate this context. State transitions are triggered BY states calling
- * {@code setState(next)}.
- */
+// Context for the State pattern. Holds the data (balance, inventory, stock)
+// and the current state — but delegates ALL behavior to the state object.
 public class VendingMachine {
 
-    // Three state objects — built once, reused forever.
+    // Three state objects — constructed once, reused forever (effectively flyweights).
     private final VendingMachineState noCoinState;
     private final VendingMachineState hasCoinState;
     private final VendingMachineState dispensingState;
@@ -29,48 +22,68 @@ public class VendingMachine {
     private VendingMachineState currentState;
 
     private final Map<String, Product> productsBySlot = new HashMap<>();
-    private final Map<String, Integer> stockBySlot     = new HashMap<>();
+    private final Map<String, Integer> stockBySlot    = new HashMap<>();
 
     private int balanceCents = 0;
-    private String selectedSlot;          // set by HasCoin → DispensingState handoff
+    private String selectedSlot;   // handoff from HasCoin → Dispensing
 
+    // Build all three state objects UP FRONT and keep them forever.
+    // Why not create new ones on every transition? States are stateless policy — they only
+    // hold a back-reference to the machine, nothing per-transition. Reusing them = zero garbage,
+    // and it makes `setState(noCoinState)` a pointer swap (no allocation).
+    //
+    // Start position: NoCoin (machine is idle, no coins inserted yet).
     public VendingMachine() {
-        // Construct states with a back-reference to this machine.
         this.noCoinState     = new NoCoinState(this);
         this.hasCoinState    = new HasCoinState(this);
         this.dispensingState = new DispensingState(this);
         this.currentState    = noCoinState;
     }
 
+    // Admin/refill operation — put a product in a slot and add units to its stock.
+    //
+    // Example:
+    //   stockProduct(new Product("A1", "Soda", 75), 5)   → slot A1 holds 5 Sodas
+    //   stockProduct(new Product("A1", "Soda", 75), 3)   → same slot, now 8 (merge SUMS)
+    //
+    // Why `merge(..., Integer::sum)`? If the slot already has stock, we ADD to it (restocking).
+    // Plain `put` would overwrite and silently lose stock.
     public void stockProduct(Product product, int count) {
-        productsBySlot.put(product.slot(), product);
-        stockBySlot.merge(product.slot(), count, Integer::sum);
+        productsBySlot.put(product.getSlot(), product);
+        stockBySlot.merge(product.getSlot(), count, Integer::sum);
     }
 
-    // ----- public ops — all delegate to current state -----
+    // ─── Public API ─────────────────────────────────────────────────────────────
+    // Every user action is a ONE-LINER that forwards to whichever state is active.
+    // This is the ENTIRE point of the State pattern: the context is dumb, the state decides.
+    //
+    // Example: user calls vm.selectProduct("A1")
+    //   - if currentState is NoCoin      → NoCoinState throws "insert a coin first"
+    //   - if currentState is HasCoin     → HasCoinState validates & chains to Dispensing
+    //   - if currentState is Dispensing  → DispensingState throws "already dispensing"
+    //
+    // Notice: no `if/else` on state anywhere here. That's the win vs. an enum-machine.
+    public void insertCoin(Coin coin)      { currentState.insertCoin(coin); }
+    public void selectProduct(String slot) { currentState.selectProduct(slot); }
+    public void dispense()                 { currentState.dispense(); }
+    public void cancel()                   { currentState.cancel(); }
 
-    public void insertCoin(Coin coin)         { currentState.insertCoin(coin); }
-    public void selectProduct(String slot)    { currentState.selectProduct(slot); }
-    public void dispense()                    { currentState.dispense(); }
-    public void cancel()                      { currentState.cancel(); }
+    // Accessors used by state objects.
+    public VendingMachineState getState()          { return currentState; }
+    public void setState(VendingMachineState s)    { this.currentState = s; }
 
-    // ----- accessors used by state objects -----
+    public VendingMachineState noCoinState()       { return noCoinState; }
+    public VendingMachineState hasCoinState()      { return hasCoinState; }
+    public VendingMachineState dispensingState()   { return dispensingState; }
 
-    public VendingMachineState getState()     { return currentState; }
-    public void setState(VendingMachineState s) { this.currentState = s; }
+    public int  getBalanceCents()               { return balanceCents; }
+    public void setBalanceCents(int cents)      { this.balanceCents = cents; }
+    public void addBalance(int cents)           { this.balanceCents += cents; }
 
-    public VendingMachineState noCoinState()    { return noCoinState; }
-    public VendingMachineState hasCoinState()   { return hasCoinState; }
-    public VendingMachineState dispensingState(){ return dispensingState; }
+    public String getSelectedSlot()             { return selectedSlot; }
+    public void   setSelectedSlot(String slot)  { this.selectedSlot = slot; }
 
-    public int getBalanceCents()              { return balanceCents; }
-    public void setBalanceCents(int cents)    { this.balanceCents = cents; }
-    public void addBalance(int cents)         { this.balanceCents += cents; }
-
-    public String getSelectedSlot()           { return selectedSlot; }
-    public void setSelectedSlot(String slot)  { this.selectedSlot = slot; }
-
-    public Product getProduct(String slot)    { return productsBySlot.get(slot); }
-    public int getStock(String slot)          { return stockBySlot.getOrDefault(slot, 0); }
-    public void decrementStock(String slot)   { stockBySlot.merge(slot, -1, Integer::sum); }
+    public Product getProduct(String slot)      { return productsBySlot.get(slot); }
+    public int     getStock(String slot)        { return stockBySlot.getOrDefault(slot, 0); }
+    public void    decrementStock(String slot)  { stockBySlot.merge(slot, -1, Integer::sum); }
 }

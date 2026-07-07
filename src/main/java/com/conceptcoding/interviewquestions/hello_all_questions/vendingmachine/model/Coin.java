@@ -1,9 +1,6 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.model;
 
-/**
- * Accepted coin denominations. Each carries its value in cents — same money
- * discipline as Parking Lot / Splitwise / PaymentGateway (`long` cents, never doubles).
- */
+// Accepted coin denominations. Value stored in cents — never doubles for money.
 public enum Coin {
     PENNY(1),
     NICKEL(5),

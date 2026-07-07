@@ -2,28 +2,25 @@ package com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.
 
 import com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.model.Coin;
 
-/**
- * State pattern contract — every state implements the same four operations.
- * The state object decides what to do (or to reject as illegal) for each call.
- *
- * <p>This is the textbook GoF State pattern: one CLASS per state (not just an
- * enum value), and per-state behavior lives on the class. The VendingMachine
- * holds a reference to the current state and delegates everything to it.
- *
- * <p>States transition each other by calling {@code machine.setState(next)} —
- * the state itself decides the next state for each event it accepts.
- */
+// GoF State pattern — one class per state, all implementing this contract.
+// Each state decides how to react (or reject) for each of the four events.
+//
+// Why not an enum with a switch? Because the reaction to the SAME event differs
+// drastically per state — insertCoin adds balance in NoCoin/HasCoin but THROWS in
+// Dispensing. Encoding that as switch statements scattered around means every new
+// state or event forces edits in multiple places. With this interface, a new state
+// = ONE new class; existing states never change.
 public interface VendingMachineState {
 
-    /** User inserted a coin. */
+    // User dropped a coin in the slot. State decides whether to accept, add balance, and/or transition.
     void insertCoin(Coin coin);
 
-    /** User selected a product by slot. */
+    // User pressed a slot button (e.g. "A1"). State decides whether the machine is ready to sell.
     void selectProduct(String slot);
 
-    /** User requested dispense (or it's auto-triggered after selectProduct). */
+    // Actually release the product. Only meaningful in DispensingState; other states throw.
     void dispense();
 
-    /** User pressed cancel — return whatever balance is present. */
+    // User pressed cancel. State decides whether there's a refund to issue or if it's a no-op.
     void cancel();
 }
