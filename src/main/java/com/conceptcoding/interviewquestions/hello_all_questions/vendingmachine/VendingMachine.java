@@ -24,7 +24,7 @@ public class VendingMachine {
     private final Map<String, Product> productsBySlot = new HashMap<>();
     private final Map<String, Integer> stockBySlot    = new HashMap<>();
 
-    private int balanceCents = 0;
+    private int balance = 0;
     private String selectedSlot;   // handoff from HasCoin → Dispensing
 
     // Build all three state objects UP FRONT and keep them forever.
@@ -43,8 +43,8 @@ public class VendingMachine {
     // Admin/refill operation — put a product in a slot and add units to its stock.
     //
     // Example:
-    //   stockProduct(new Product("A1", "Soda", 75), 5)   → slot A1 holds 5 Sodas
-    //   stockProduct(new Product("A1", "Soda", 75), 3)   → same slot, now 8 (merge SUMS)
+    //   stockProduct(new Product("A1", "Soda", 15), 5)   → slot A1 holds 5 Sodas @ ₹15
+    //   stockProduct(new Product("A1", "Soda", 15), 3)   → same slot, now 8 (merge SUMS)
     //
     // Why `merge(..., Integer::sum)`? If the slot already has stock, we ADD to it (restocking).
     // Plain `put` would overwrite and silently lose stock.
@@ -76,9 +76,9 @@ public class VendingMachine {
     public VendingMachineState hasCoinState()      { return hasCoinState; }
     public VendingMachineState dispensingState()   { return dispensingState; }
 
-    public int  getBalanceCents()               { return balanceCents; }
-    public void setBalanceCents(int cents)      { this.balanceCents = cents; }
-    public void addBalance(int cents)           { this.balanceCents += cents; }
+    public int  getBalance()               { return balance; }
+    public void setBalance(int value)      { this.balance = value; }
+    public void addBalance(int value)      { this.balance += value; }
 
     public String getSelectedSlot()             { return selectedSlot; }
     public void   setSelectedSlot(String slot)  { this.selectedSlot = slot; }

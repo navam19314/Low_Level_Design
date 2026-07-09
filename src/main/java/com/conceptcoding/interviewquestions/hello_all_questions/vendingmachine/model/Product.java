@@ -5,15 +5,15 @@ public class Product {
 
     private final String slot;
     private final String name;
-    private final int    priceCents;
+    private final int    price;
 
-    public Product(String slot, String name, int priceCents) {
-        this.slot       = slot;
-        this.name       = name;
-        this.priceCents = priceCents;
+    public Product(String slot, String name, int price) {
+        this.slot  = slot;
+        this.name  = name;
+        this.price = price;
     }
 
-    public String getSlot()       { return slot; }
-    public String getName()       { return name; }
-    public int    getPriceCents() { return priceCents; }
+    public String getSlot()  { return slot; }
+    public String getName()  { return name; }
+    public int    getPrice() { return price; }
 }

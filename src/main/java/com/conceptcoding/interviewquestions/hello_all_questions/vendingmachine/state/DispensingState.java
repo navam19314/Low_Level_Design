@@ -26,7 +26,7 @@ public class DispensingState implements VendingMachineState {
     // The "release the product and reset" method. Called once, chained from HasCoin.
     //
     // Four things happen here, in order:
-    //   1. Compute change   = balanceCents - price   (may be 0 for exact payment)
+    //   1. Compute change   = balance - price   (may be 0 for exact payment)
     //   2. Decrement stock  (one less unit in this slot)
     //   3. Print dispense + change lines
     //   4. RESET everything: balance=0, selectedSlot=null, state=NoCoin
@@ -35,8 +35,8 @@ public class DispensingState implements VendingMachineState {
     // set, the next dispense() (in some future session) would try to release the OLD
     // product — a stale-state bug.
     //
-    // Worked example: user paid 100c for a 75c Soda
-    //   change = 100 - 75 = 25 → "returning change: 25c"
+    // Worked example: user paid ₹20 (TEN + TEN) for a ₹15 Soda
+    //   change = 20 - 15 = 5 → "returning change: ₹5"
     //   stock[A1]-- → 4 left
     //   balance = 0, selectedSlot = null, state = NoCoin
     //   Machine is ready for the next customer.
@@ -44,16 +44,16 @@ public class DispensingState implements VendingMachineState {
     public void dispense() {
         String slot = machine.getSelectedSlot();
         Product product = machine.getProduct(slot);
-        int change = machine.getBalanceCents() - product.getPriceCents();
+        int change = machine.getBalance() - product.getPrice();
 
         machine.decrementStock(slot);
         System.out.println("  dispensing " + product.getName() + " (" + slot + ")");
         if (change > 0) {
-            System.out.println("  returning change: " + change + "c");
+            System.out.println("  returning change: ₹" + change);
         }
 
         // Reset all transient state and return to idle.
-        machine.setBalanceCents(0);
+        machine.setBalance(0);
         machine.setSelectedSlot(null);
         machine.setState(machine.noCoinState());
     }

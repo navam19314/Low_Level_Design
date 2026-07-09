@@ -1,15 +1,17 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.vendingmachine.model;
 
-// Accepted coin denominations. Value stored in cents — never doubles for money.
+// Accepted coin denominations (Indian rupee-style: ₹1, ₹2, ₹5, ₹10, ₹20).
+// Value is an int — never doubles for money.
 public enum Coin {
-    PENNY(1),
-    NICKEL(5),
-    DIME(10),
-    QUARTER(25);
+    ONE(1),
+    TWO(2),
+    FIVE(5),
+    TEN(10),
+    TWENTY(20);
 
-    private final int cents;
+    private final int value;
 
-    Coin(int cents) { this.cents = cents; }
+    Coin(int value) { this.value = value; }
 
-    public int getCents() { return cents; }
+    public int getValue() { return value; }
 }

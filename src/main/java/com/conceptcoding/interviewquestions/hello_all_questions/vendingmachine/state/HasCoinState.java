@@ -14,11 +14,11 @@ public class HasCoinState implements VendingMachineState {
     // User keeps feeding coins — accumulate, stay in HasCoin.
     // No transition here: we're already in HasCoin, more coins just increase the balance.
     //
-    // Example: balance=25 (QUARTER), user adds a DIME → balance=35, still HasCoin.
+    // Example: balance=10 (TEN), user adds a FIVE → balance=15, still HasCoin.
     @Override
     public void insertCoin(Coin coin) {
-        machine.addBalance(coin.getCents());
-        System.out.println("  inserted " + coin + " — balance now " + machine.getBalanceCents() + "c");
+        machine.addBalance(coin.getValue());
+        System.out.println("  inserted " + coin + " — balance now ₹" + machine.getBalance());
     }
 
     // THE core method of the whole problem. Three guards, then a two-step chain.
@@ -37,7 +37,7 @@ public class HasCoinState implements VendingMachineState {
     // the user doesn't press two buttons. But the two events (select, dispense) are
     // conceptually distinct, so we model them as two state operations and chain them.
     //
-    // Worked example: balance=75c, slot A1 = "Soda 75c", stock=5
+    // Worked example: balance=₹15, slot A1 = "Soda ₹15", stock=5
     //   guards pass → setSelectedSlot("A1") → setState(Dispensing) → Dispensing.dispense()
     //   result: Soda released, balance reset to 0, back to NoCoinState.
     @Override
@@ -49,9 +49,9 @@ public class HasCoinState implements VendingMachineState {
         if (machine.getStock(slot) <= 0) {
             throw new IllegalStateException("Out of stock: " + product.getName() + " (" + slot + ")");
         }
-        if (machine.getBalanceCents() < product.getPriceCents()) {
-            throw new IllegalStateException("Insufficient balance — need "
-                    + product.getPriceCents() + "c, have " + machine.getBalanceCents() + "c");
+        if (machine.getBalance() < product.getPrice()) {
+            throw new IllegalStateException("Insufficient balance — need ₹"
+                    + product.getPrice() + ", have ₹" + machine.getBalance());
         }
         machine.setSelectedSlot(slot);
         System.out.println("  selected " + product.getName() + " (" + slot + ") — proceeding to dispense");
@@ -70,16 +70,16 @@ public class HasCoinState implements VendingMachineState {
 
     // User changed their mind. Refund the whole balance and return to idle.
     //
-    // Example: balance=20 (2 DIMES), user hits cancel
-    //   refund = 20c → print → balance=0 → setState(NoCoin)
+    // Example: balance=₹20 (TEN + TEN), user hits cancel
+    //   refund = ₹20 → print → balance=0 → setState(NoCoin)
     //
     // Note: we snapshot `refund` BEFORE resetting balance to 0. If we printed
-    // machine.getBalanceCents() after the reset it would always say "refunding 0c".
+    // machine.getBalance() after the reset it would always say "refunding ₹0".
     @Override
     public void cancel() {
-        int refund = machine.getBalanceCents();
-        machine.setBalanceCents(0);
-        System.out.println("  cancelled — refunding " + refund + "c");
+        int refund = machine.getBalance();
+        machine.setBalance(0);
+        System.out.println("  cancelled — refunding ₹" + refund);
         machine.setState(machine.noCoinState());
     }
 }

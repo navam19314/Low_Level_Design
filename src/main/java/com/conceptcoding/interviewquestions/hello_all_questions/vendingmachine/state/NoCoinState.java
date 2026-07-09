@@ -12,8 +12,8 @@ public class NoCoinState implements VendingMachineState {
 
     // The ONLY event that moves us forward from idle.
     //
-    // Example: user inserts a QUARTER (25c)
-    //   1. balance goes from 0 → 25
+    // Example: user inserts a TEN (₹10)
+    //   1. balance goes from 0 → 10
     //   2. setState(hasCoinState) — next event (another coin, selectProduct, cancel)
     //      will be handled by HasCoinState, NOT this class.
     //
@@ -21,8 +21,8 @@ public class NoCoinState implements VendingMachineState {
     // "enough" is only checked when user picks a product (in HasCoinState.selectProduct).
     @Override
     public void insertCoin(Coin coin) {
-        machine.addBalance(coin.getCents());
-        System.out.println("  inserted " + coin + " — balance now " + machine.getBalanceCents() + "c");
+        machine.addBalance(coin.getValue());
+        System.out.println("  inserted " + coin + " — balance now ₹" + machine.getBalance());
         machine.setState(machine.hasCoinState());
     }
 

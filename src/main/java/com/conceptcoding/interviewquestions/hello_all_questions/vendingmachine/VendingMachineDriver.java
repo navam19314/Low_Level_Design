@@ -14,14 +14,13 @@ public class VendingMachineDriver {
         scenarioExactChangeNoRefund();
     }
 
-    // ---- 1. Happy path: insert coins → select → dispense ----
+    // ---- 1. Happy path: TEN + FIVE = ₹15 → Soda ₹15 dispensed, no change ----
     private static void scenarioHappyPath() {
         System.out.println("=== Scenario 1: happy path ===");
         VendingMachine vm = primedMachine();
-        vm.insertCoin(Coin.QUARTER);    // 25c
-        vm.insertCoin(Coin.QUARTER);    // 50c
-        vm.insertCoin(Coin.QUARTER);    // 75c
-        vm.selectProduct("A1");          // Soda 75c — dispenses, returns 0 change
+        vm.insertCoin(Coin.TEN);
+        vm.insertCoin(Coin.FIVE);
+        vm.selectProduct("A1");
         System.out.println();
     }
 
@@ -29,9 +28,9 @@ public class VendingMachineDriver {
     private static void scenarioInsufficientBalance() {
         System.out.println("=== Scenario 2: insufficient balance ===");
         VendingMachine vm = primedMachine();
-        vm.insertCoin(Coin.QUARTER);    // 25c
+        vm.insertCoin(Coin.FIVE);      // ₹5, need ₹15
         try {
-            vm.selectProduct("A1");      // needs 75c
+            vm.selectProduct("A1");
         } catch (IllegalStateException e) {
             System.out.println("  rejected: " + e.getMessage());
         }
@@ -42,9 +41,9 @@ public class VendingMachineDriver {
     private static void scenarioCancelRefunds() {
         System.out.println("=== Scenario 3: cancel returns balance ===");
         VendingMachine vm = primedMachine();
-        vm.insertCoin(Coin.DIME);
-        vm.insertCoin(Coin.DIME);
-        vm.cancel();                    // refund 20c, transition back to NoCoin
+        vm.insertCoin(Coin.TEN);
+        vm.insertCoin(Coin.TEN);
+        vm.cancel();                    // refund ₹20
         System.out.println();
     }
 
@@ -52,11 +51,11 @@ public class VendingMachineDriver {
     private static void scenarioOutOfStock() {
         System.out.println("=== Scenario 4: out of stock ===");
         VendingMachine vm = new VendingMachine();
-        vm.stockProduct(new Product("A1", "Soda", 75), 1);    // only one
-        vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER);
+        vm.stockProduct(new Product("A1", "Soda", 15), 1);    // only one
+        vm.insertCoin(Coin.TEN); vm.insertCoin(Coin.FIVE);
         vm.selectProduct("A1");                                // OK, first one
         // Now stock is 0. Try again.
-        vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER);
+        vm.insertCoin(Coin.TEN); vm.insertCoin(Coin.FIVE);
         try {
             vm.selectProduct("A1");
         } catch (IllegalStateException e) {
@@ -66,21 +65,21 @@ public class VendingMachineDriver {
         System.out.println();
     }
 
-    // ---- 5. Invalid transitions from NoCoin (the textbook State-pattern guards) ----
+    // ---- 5. Invalid transitions from NoCoin ----
     private static void scenarioInvalidTransitionsFromNoCoin() {
         System.out.println("=== Scenario 5: invalid actions from NoCoin state ===");
         VendingMachine vm = primedMachine();
         try { vm.selectProduct("A1"); } catch (IllegalStateException e) { System.out.println("  selectProduct: " + e.getMessage()); }
         try { vm.dispense();           } catch (IllegalStateException e) { System.out.println("  dispense:      " + e.getMessage()); }
-        vm.cancel();   // no-op, prints diagnostic
+        vm.cancel();
         System.out.println();
     }
 
-    // ---- 6. Exact change — no refund needed ----
+    // ---- 6. Exact change — no refund printed ----
     private static void scenarioExactChangeNoRefund() {
         System.out.println("=== Scenario 6: exact change → no refund printed ===");
         VendingMachine vm = primedMachine();
-        vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER); vm.insertCoin(Coin.QUARTER); // exactly 75
+        vm.insertCoin(Coin.TEN); vm.insertCoin(Coin.FIVE);   // exactly ₹15
         vm.selectProduct("A1");
         System.out.println();
     }
@@ -88,9 +87,9 @@ public class VendingMachineDriver {
     // ----- helper -----
     private static VendingMachine primedMachine() {
         VendingMachine vm = new VendingMachine();
-        vm.stockProduct(new Product("A1", "Soda",   75), 5);
-        vm.stockProduct(new Product("B2", "Chips",  50), 5);
-        vm.stockProduct(new Product("C3", "Candy",  30), 5);
+        vm.stockProduct(new Product("A1", "Soda",  15), 5);
+        vm.stockProduct(new Product("B2", "Chips", 10), 5);
+        vm.stockProduct(new Product("C3", "Candy",  5), 5);
         return vm;
     }
 }
