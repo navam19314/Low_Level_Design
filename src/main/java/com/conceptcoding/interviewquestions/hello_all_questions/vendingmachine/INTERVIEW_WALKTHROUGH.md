@@ -122,20 +122,39 @@ Watch the clock at minute **4**, minute **20** (start coding), minute **36** (ex
 ### What to say out loud (opener)
 > "Vending machine is the textbook State pattern problem. The senior signal here is one class per state, with per-state behavior, not a switch on a status enum."
 
-### Probe the 4 themes
+### Clarifying-questions dialogue (do this before writing anything)
 
-| Theme               | Question to ask                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Primary capabilities| "Insert coins, select product, dispense, cancel. Multiple products with different prices and stock?" |
-| Rules               | "Coins are fixed denominations (penny/nickel/dime/quarter)? Balance accumulates? Reject if insufficient? Return change automatically?" |
-| Error handling      | "Operations from invalid states throw — insert coin during dispense, select before paying, etc.?" |
-| Concurrency         | "Single-user vending machine — no concurrency in v1?" |
+**You:** *"User actions — insert coins, select a product, and cancel? Anything else?"*
+**Interviewer:** *"Those three. And dispense happens automatically after a valid selection."*
+> Signals the auto-chain from HasCoin → Dispensing inside `selectProduct`.
+
+**You:** *"Coin denominations — fixed set, or arbitrary integers? I'll assume rupee coins ₹1, ₹2, ₹5, ₹10, ₹20."*
+**Interviewer:** *"Fixed denominations is fine."*
+> An enum is the right model. No need for a Money value object.
+
+**You:** *"When user pays more than the price, do we return change automatically? And should we track physical coin inventory to make exact change?"*
+**Interviewer:** *"Return change as an integer amount — no physical coin change algorithm for v1."*
+> Simplifies to `int change = balance - price`. Physical change-making is a Step-5 extension.
+
+**You:** *"Multiple products per slot code, or one product per slot? And can slots go out of stock?"*
+**Interviewer:** *"One product per slot. Slots can go out of stock — reject with a clear error."*
+> Two maps: `slot → Product`, `slot → stockCount`. No `Inventory` class needed.
+
+**You:** *"What happens if a user calls an action in the wrong state — like `selectProduct` before inserting a coin?"*
+**Interviewer:** *"Throw a clear exception. The state should decide what's illegal."*
+> This is the direct signal for class-per-state. Each state defines its own rejection message.
+
+**You:** *"Concurrency — is this a single-user machine, or can multiple users interact with it at once?"*
+**Interviewer:** *"Single-user for v1."*
+> No `synchronized` needed. Concurrency becomes a Step-5 extension.
+
+### Then state out loud:
 
 ### What to write on the board
 
 ```
 Functional Requirements
-1. Insert coins (Penny / Nickel / Dime / Quarter) — balance accumulates.
+1. Insert coins (₹1 / ₹2 / ₹5 / ₹10 / ₹20) — balance accumulates.
 2. Select product by slot code (e.g., "A1") — validates stock + balance.
 3. Dispense product — auto-triggered after a valid selectProduct; returns change.
 4. Cancel — refunds the current balance, returns to idle.
@@ -175,8 +194,8 @@ Entities
 - NoCoinState             (idle — only insertCoin advances; everything else rejects)
 - HasCoinState            (balance > 0 — insertCoin adds, selectProduct may advance, cancel refunds)
 - DispensingState         (transient — dispense releases + transitions to NoCoin)
-- Product                 (immutable record: slot, name, priceCents)
-- Coin                    (enum: PENNY / NICKEL / DIME / QUARTER with cents value)
+- Product                 (immutable: slot, name, price)
+- Coin                    (enum: ONE / TWO / FIVE / TEN / TWENTY with rupee value)
 
 NOT entities
 - Inventory               (two maps inside VendingMachine — no separate behavior)
@@ -189,7 +208,7 @@ Relationships
     currentState  →  one of the three
     Map<slot, Product> productsBySlot
     Map<slot, Integer> stockBySlot
-    int balanceCents, String selectedSlot
+    int balance, String selectedSlot
 - Each state holds a back-reference to VendingMachine (its CONTEXT)
 - States transition the context: machine.setState(machine.dispensingState())
 ```
@@ -261,7 +280,7 @@ public class VendingMachine {
     // Data states need to read / mutate
     private final Map<String, Product> productsBySlot = new HashMap<>();
     private final Map<String, Integer> stockBySlot     = new HashMap<>();
-    private int balanceCents = 0;
+    private int balance = 0;
     private String selectedSlot;                     // set by HasCoin → Dispensing handoff
 
     public VendingMachine() {
@@ -281,7 +300,7 @@ public class VendingMachine {
     public VendingMachineState getState();
     public void setState(VendingMachineState s);
     public VendingMachineState noCoinState() / hasCoinState() / dispensingState();
-    public int getBalanceCents();  public void addBalance(int);  public void setBalanceCents(int);
+    public int getBalance();  public void addBalance(int);  public void setBalance(int);
     public Product getProduct(String slot);  public int getStock(String slot);  public void decrementStock(String slot);
     public String getSelectedSlot();  public void setSelectedSlot(String slot);
 }
@@ -301,7 +320,7 @@ public class NoCoinState implements VendingMachineState {
     public NoCoinState(VendingMachine machine) { this.machine = machine; }
 
     public void insertCoin(Coin coin) {
-        machine.addBalance(coin.getCents());
+        machine.addBalance(coin.getValue());
         machine.setState(machine.hasCoinState());       // ← transition
     }
 
@@ -326,7 +345,7 @@ public void selectProduct(String slot) {
     Product product = machine.getProduct(slot);
     if (product == null)                            throw new IllegalArgumentException("Unknown slot");
     if (machine.getStock(slot) <= 0)                throw new IllegalStateException("Out of stock");
-    if (machine.getBalanceCents() < product.priceCents())
+    if (machine.getBalance() < product.getPrice())
                                                     throw new IllegalStateException("Insufficient balance");
 
     machine.setSelectedSlot(slot);
@@ -343,11 +362,11 @@ public void selectProduct(String slot) {
 public void dispense() {
     String slot = machine.getSelectedSlot();
     Product product = machine.getProduct(slot);
-    int change = machine.getBalanceCents() - product.priceCents();
+    int change = machine.getBalance() - product.getPrice();
 
     machine.decrementStock(slot);
     // log/return change
-    machine.setBalanceCents(0);
+    machine.setBalance(0);
     machine.setSelectedSlot(null);
     machine.setState(machine.noCoinState());          // ← back to idle
 }
@@ -372,36 +391,33 @@ public void dispense() {
 ### 4.2 Verification — dry-run the happy path
 
 ```
-Setup: 5 units of Soda at A1 (75c), balance = 0, state = NoCoinState.
+Setup: 5 units of Soda at A1 (₹15), balance = 0, state = NoCoinState.
 
-insertCoin(QUARTER):
+insertCoin(TEN):
    currentState = NoCoinState
-   → noCoin.insertCoin(QUARTER):
-     machine.addBalance(25)        balance = 25c
+   → noCoin.insertCoin(TEN):
+     machine.addBalance(10)        balance = ₹10
      machine.setState(hasCoin)
    ✓ now in HasCoinState
 
-insertCoin(QUARTER):
+insertCoin(FIVE):
    currentState = HasCoinState
-   → hasCoin.insertCoin(QUARTER):
-     machine.addBalance(25)        balance = 50c
+   → hasCoin.insertCoin(FIVE):
+     machine.addBalance(5)         balance = ₹15
      (stays in HasCoin)
    ✓
-
-insertCoin(QUARTER):
-   → balance = 75c  (still in HasCoin)
 
 selectProduct("A1"):
    currentState = HasCoinState
    → hasCoin.selectProduct("A1"):
-     product = Soda @ 75c, stock = 5, balance = 75c → OK
+     product = Soda @ ₹15, stock = 5, balance = ₹15 → OK
      machine.setSelectedSlot("A1")
      machine.setState(dispensing)
      machine.getState().dispense()                ← chains!
        → dispensing.dispense():
-         change = 75 − 75 = 0
+         change = 15 − 15 = 0
          decrementStock(A1)        stock = 4
-         balanceCents = 0
+         balance = 0
          selectedSlot = null
          machine.setState(noCoin)
    ✓ back in NoCoinState; product released; balance reset
@@ -417,9 +433,9 @@ selectProduct("A1") → throws IllegalStateException("Insert a coin first")     
 dispense()          → throws IllegalStateException("Nothing to dispense")     ✓
 cancel()            → no-op (zero balance, nothing to refund)                  ✓
 
-state = HasCoinState (balance = 25c)
+state = HasCoinState (balance = ₹5)
 selectProduct("A1") → throws IllegalStateException("Insufficient balance")    ✓
-                       (Soda needs 75c, have 25)
+                       (Soda needs ₹15, have ₹5)
 
 state = HasCoinState, stock[A1] = 0
 selectProduct("A1") → throws IllegalStateException("Out of stock")            ✓
@@ -457,7 +473,7 @@ cancel()            → throws "cannot cancel during dispense"                  
 
 > **Problem in current design:** *"`change = balance - price` returns an integer. Real machines need to return actual COINS — and may not have the right denominations."*
 >
-> **Pattern as the fix:** *"`ChangeProvider` Strategy — `GreedyChangeProvider` (default: largest-denomination-first), `DPChangeProvider` (DP for guaranteed-minimum-coins). On dispense, ChangeProvider takes (totalCents, coinInventory) and returns `Map<Coin, Integer>` to dispense — or fails if no exact change. Failed change is a Step-5 design choice — reject the sale, or dispense with apology."*
+> **Pattern as the fix:** *"`ChangeProvider` Strategy — `GreedyChangeProvider` (default: largest-denomination-first), `DPChangeProvider` (DP for guaranteed-minimum-coins). On dispense, ChangeProvider takes (totalAmount, coinInventory) and returns `Map<Coin, Integer>` to dispense — or fails if no exact change. Failed change is a Step-5 design choice — reject the sale, or dispense with apology."*
 
 ### 5.5 Other "what-if" answers
 
@@ -544,10 +560,10 @@ cancel()            → throws "cannot cancel during dispense"                  
 @Test
 void insufficient_balance_rejected_and_state_unchanged() {
     VendingMachine vm = new VendingMachine();
-    vm.stockProduct(new Product("A1", "Soda", 75), 1);
-    vm.insertCoin(Coin.QUARTER);
+    vm.stockProduct(new Product("A1", "Soda", 15), 1);
+    vm.insertCoin(Coin.FIVE);
     assertThrows(IllegalStateException.class, () -> vm.selectProduct("A1"));
-    assertEquals(25, vm.getBalanceCents());        // balance preserved
+    assertEquals(5, vm.getBalance());              // balance preserved
 }
 ```
 
@@ -566,6 +582,32 @@ void insufficient_balance_rejected_and_state_unchanged() {
 > *"Six classes: VendingMachine (context), VendingMachineState (interface — 4 ops), three state classes (NoCoin, HasCoin, Dispensing), Coin enum, Product record. **State pattern** — class-per-state, NOT enum-machine. Each state CLASS decides what to do for each of the 4 operations (insertCoin / selectProduct / dispense / cancel) — most operations throw IllegalStateException in 'wrong' states; the right one transitions by calling `machine.setState(machine.<next>State())`. State objects are constructed ONCE and reused (effectively flyweights). HasCoin's `selectProduct` immediately chains a `dispense()` call after transitioning — clean way to express auto-dispense after valid selection. Compares to my PaymentGateway / JobScheduler / Inventory which use enum-state-machines because their per-state behavior is uniform; here per-state behavior materially differs, which is what justifies class-per-state. Extensions: MaintenanceState as a 4th class, Strategy for payment methods, Strategy for change-making algorithm."*
 
 That's ~50 seconds. Hits: class-per-state, transitions self-driven, the contrast with enum-machine, extension via more state classes.
+
+---
+
+## What is expected at each level
+
+### Junior (SDE-1)
+- Recognizes the machine has multiple modes (idle / has money / dispensing) but may still write a single class with a status enum + switch statements.
+- With a nudge, extracts a state interface. May forget that DispensingState is transient or that HasCoin → Dispensing should auto-chain.
+- Handles happy path + insufficient balance. Out-of-stock and mid-dispense rejections often need to be prompted.
+- No thread-safety talk unless asked.
+
+### Mid-level (SDE-2) — this is the level most interviews target
+- Reaches class-per-state pattern without prompting; names it "GoF State" out loud.
+- Correctly makes state objects flyweights (constructed once in the context ctor, reused forever).
+- Handles all four events × three states = 12 cells correctly, including the "reject" cells with specific error messages per state.
+- Implements the HasCoin → Dispensing auto-chain (transition + immediate `dispense()` call) as a deliberate design, not a mistake.
+- Money is `int` (rupees) or `long` cents — never `double`. Snapshots `refund` before resetting balance.
+- Runs the happy-path dry-run out loud without prompting.
+
+### Senior (SDE-3 / SDE-II at Amazon)
+- Everything mid-level does, faster, and with proactive tradeoff commentary.
+- Names the contrast up front: *"Class-per-state here because behavior differs materially per state. Enum-machine in PaymentGateway/JobScheduler because only transitions differ."*
+- Discusses extensibility axes as ORTHOGONAL Strategies before being asked (payment methods × change-making × maintenance mode × cart).
+- Catches subtle bugs: stale `selectedSlot` after dispense, "refunding ₹0" if you print balance after reset, unbounded state chain if new states are added without a terminator.
+- Would move to `synchronized` on the four public methods if the machine went multi-user, and can explain why the coin slot / motor being a physical resource matches naturally to the state-locking model.
+- Finishes early. Uses buffer to discuss testing strategy (12-cell coverage matrix: 3 states × 4 events).
 
 ---
 
