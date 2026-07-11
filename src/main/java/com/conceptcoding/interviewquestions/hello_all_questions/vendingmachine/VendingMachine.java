@@ -49,8 +49,9 @@ public class VendingMachine {
     // Why `merge(..., Integer::sum)`? If the slot already has stock, we ADD to it (restocking).
     // Plain `put` would overwrite and silently lose stock.
     public void stockProduct(Product product, int count) {
-        productsBySlot.put(product.getSlot(), product);
-        stockBySlot.merge(product.getSlot(), count, Integer::sum);
+        String slot = product.getSlot();
+        productsBySlot.put(slot, product);
+        stockBySlot.put(slot, stockBySlot.getOrDefault(slot, 0) + count);
     }
 
     // ─── Public API ─────────────────────────────────────────────────────────────
@@ -85,5 +86,5 @@ public class VendingMachine {
 
     public Product getProduct(String slot)      { return productsBySlot.get(slot); }
     public int     getStock(String slot)        { return stockBySlot.getOrDefault(slot, 0); }
-    public void    decrementStock(String slot)  { stockBySlot.merge(slot, -1, Integer::sum); }
+    public void    decrementStock(String slot)  { stockBySlot.put(slot, stockBySlot.get(slot) - 1); }
 }

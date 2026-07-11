@@ -341,6 +341,47 @@ Pluggable at machine construction. Failed change is a design choice — reject t
 
 ---
 
+## Design patterns in play (name these out loud in the interview)
+
+### In the BASE design — mention in Step 2 or Step 3
+
+| Pattern / Principle | Where it lives | One-line justification |
+|---------------------|----------------|------------------------|
+| **State (GoF)** ⭐ | `VendingMachineState` interface + 3 concrete classes | *"Class-per-state — insertCoin ADDS in NoCoin, STAYS in HasCoin, THROWS in Dispensing. Materially different behavior for the same event."* |
+| **Facade** | `VendingMachine` context | *"Callers only touch VendingMachine — 4 public methods delegate to the current state."* |
+| **Flyweight** | 3 state objects constructed once, reused forever | *"States are stateless policy — no point allocating per transition."* |
+| **Tell, Don't Ask** | Machine tells the current state, state decides | *"Context is dumb, behavior is on the state class."* |
+| **Immutability** | `Product` — all fields `final` | *"Once shelved, a product's price and name don't change mid-transaction."* |
+
+**Why class-per-state, not enum-machine?** *"For the same event, the ACTION differs across states — not just whether it's allowed. That's the test. My PaymentGateway uses enum-machine because every status just does `status = next`; here, insertCoin adds balance in one state and throws in another."*
+
+### Patterns for Step 5 extensibility
+
+| Follow-up trigger | Pattern | The one-line move |
+|-------------------|---------|-------------------|
+| "Add MaintenanceState — admin can disable the machine" | **State (extend)** | *"Add a 4th class. All 4 ops throw 'offline' except admin `exitMaintenance`. Existing states untouched — that's the payoff."* |
+| "Card / wallet payment alongside coins" | **Strategy** ⭐ | *"`PaymentMethod` interface — `CoinPayment`, `CardPayment`, `WalletPayment`. HasCoin calls `paymentMethod.addToBalance` regardless of source."* |
+| "Physical change-making — return actual coins" | **Strategy** | *"`ChangeProvider` — `GreedyChangeProvider` (largest-first), `DPChangeProvider` (guaranteed-minimum-coins). Pluggable at machine construction."* |
+| "Multi-item shopping cart" | **State (add CartState)** | *"New `CartState` between HasCoin and Dispensing. Replace `selectedSlot: String` with `cart: List<String>`. Add `checkout` event."* |
+| "Notify a backend on every sale" | **Observer** | *"VendingMachine publishes `ProductDispensed` events; analytics / audit listeners subscribe independently."* |
+| "Different machine layouts (rows/columns)" | **Strategy** | *"`Layout` interface at construction — defines slots and capacities. VendingMachine becomes parameterizable."* |
+| "Audit log of every transition" | **Observer** (via state hooks) | *"Add `onEnter` / `onExit` hooks on VendingMachineState; emit transition events."* |
+
+### Patterns to actively refuse
+
+- **Enum + switch instead of class-per-state** — misses the whole point of the problem.
+- **Singleton on VendingMachine** — works if truly one instance, but DI is cleaner.
+- **Builder for the 0-arg ctor** — academic noise.
+- **Enum state machine** — works, but defeats THE senior signal for this problem (which is the class-per-state vs enum-machine contrast).
+
+### The rule to sound natural
+
+1. **State pattern is non-negotiable in the base for THIS problem.** Not naming it costs the interview.
+2. **Contrast with enum-machine explicitly** — cite PaymentGateway or JobScheduler as your enum-machine problem.
+3. **Cap Step-5 patterns at 2.** Usually Strategy (payment or change) + one State extension (MaintenanceState or CartState).
+
+---
+
 ## What is expected at each level
 
 ### Junior (SDE-1)

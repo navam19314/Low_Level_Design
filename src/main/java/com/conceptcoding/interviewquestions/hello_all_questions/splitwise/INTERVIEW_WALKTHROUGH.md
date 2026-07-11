@@ -642,6 +642,50 @@ Collections.sort(allUsers);   // canonical order — same threads always acquire
 
 ---
 
+## Design patterns in play (name these out loud in the interview)
+
+### In the BASE design — mention in Step 2 or Step 3
+
+| Pattern / Principle | Where it lives | One-line justification |
+|---------------------|----------------|------------------------|
+| **Strategy** ⭐ | `SplitStrategy` interface + 3 impls (`Equal`, `Exact`, `Percent`) | *"3 impls on day 1 — that's the one-sentence test. Each strategy owns its own validation and rounding rules."* |
+| **Facade** | `ExpenseManager` | *"Callers only touch ExpenseManager — 5 public methods hide the balance graph, ledger, and strategy dispatch."* |
+| **Information Expert** (GRASP) | Validation on each strategy, balance graph on ExpenseManager | *"Sum-must-equal-total lives in each strategy; the graph invariant lives where the graph lives."* |
+| **Tell, Don't Ask** | ExpenseManager tells strategy to `calculate`; never inspects strategy state | *"Strategy returns splits; ExpenseManager doesn't peek into the algorithm's internals."* |
+| **Immutability** | `Expense`, `Settlement`, `User` | *"Ledger entries never change — that's the whole point of a ledger."* |
+| **Value Object** | `Split(userId, amountCents)` | *"Result of one strategy call — no identity, just data."* |
+
+**No Factory in the base — deliberately.** *"The 3 strategies are wired directly in the constructor via `Map.of(...)`. If config comes from YAML with an algorithm discriminator, I'd add a `SplitStrategyFactory` — that's a Step 5 answer."*
+
+### Patterns for Step 5 extensibility
+
+| Follow-up trigger | Pattern | The one-line move |
+|-------------------|---------|-------------------|
+| "Add a new split type (Share-based)" | **Strategy** ⭐ | *"New `ShareSplitStrategy implements SplitStrategy`. Add `SplitType.SHARE`. One switch entry to wire it. ExpenseManager untouched."* |
+| "Notify users on expense add" | **Observer** | *"`ExpenseListener` interface; SMS / Email / Audit register independently. Fire AFTER commit — listener failure never corrupts state."* |
+| "Multi-currency (USD dinner + INR taxi)" | **Value Object + Strategy** | *"`Money(amount, currency)` + `FxRateProvider` interface — `SpotRate` (today) vs `HistoricalRate` (fair for long trips)."* |
+| "Persist across restart" | **Repository + Event Sourcing** | *"`ExpenseRepository` — save expenses only (source of truth); balances are a derived cache rebuilt by replay on boot."* |
+| "Groups (Trip, Flat, Office)" | **Composition** | *"Each Group owns its own `ExpenseManager`. Top-level `Splitwise` class routes by groupId."* |
+| "Different simplification algorithms" | **Strategy** | *"`SimplificationStrategy` — `Greedy` (default), `Optimal` (NP-hard, small N only). Same interface, caller picks."* |
+| "Partial settlements mid-trip" | Reuse `addOwed` | *"A settlement is a reverse expense — call `addOwed(debtor, creditor, amount)` with roles flipped. No new algorithm."* |
+| "Per-user locking under contention" | **Concurrency pattern** | *"Sorted lock acquisition on user pairs — same as bank transfers. Prevents deadlock."* |
+| "Config-driven algorithm selection" | **Factory** | *"`SplitStrategyFactory.create(config)` reads a discriminator. Only needed once wiring becomes runtime data."* |
+
+### Patterns to actively refuse
+
+- **Singleton on ExpenseManager** — kills tests; DI a single instance.
+- **State pattern on Expense** (PENDING / SETTLED) — an enum is fine unless per-state behavior actually diverges.
+- **Builder for `Expense`** — 5-arg ctor is fine; Builder is for many-optional-field constructors.
+- **Visitor over splits** — homogeneous list, no benefit.
+
+### The rule to sound natural
+
+1. **Strategy is non-negotiable in the base** — 3 split types on day 1 mandate it.
+2. **Cap total patterns at 2** in the base (Strategy + Facade).
+3. **Pair each pattern with a concrete win.** *"Strategy — because 3 impls on day 1"* > *"I'd use Strategy."*
+
+---
+
 ## What is expected at each level
 
 ### Junior (SDE-1)

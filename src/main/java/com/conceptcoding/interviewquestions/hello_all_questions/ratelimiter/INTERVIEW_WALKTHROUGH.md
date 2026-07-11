@@ -594,6 +594,47 @@ synchronized (clientId) { /* new String("alice") != "alice" — different monito
 
 ---
 
+## Design patterns in play (name these out loud in the interview)
+
+### In the BASE design — mention in Step 2 or Step 3
+
+| Pattern / Principle | Where it lives | One-line justification |
+|---------------------|----------------|------------------------|
+| **Strategy** ⭐ | `Limiter` interface + 2 impls (`TokenBucketLimiter`, `SlidingWindowLogLimiter`) | *"2 algorithms on day 1 with different math and different memory profiles — that's the one-sentence test."* |
+| **Factory** | `LimiterFactory` reads config, constructs the right Limiter | *"Config arrives as raw JSON with an algorithm discriminator; the factory maps it to the right constructor. Callers never `new TokenBucketLimiter(...)` directly."* |
+| **Facade** | `RateLimiter` | *"Application code only calls `allow(clientId, endpoint)` — 4 collaborators (factory, limiters map, default limiter, per-key state) hidden inside."* |
+| **Dependency Injection** | `Clock` injected into every Limiter | *"Refill math is time-dependent — DI makes it testable with a `MutableClock` instead of `Thread.sleep`."* |
+| **Value Object** | `RateLimitResult` (allowed, remaining, retryAfterMs) | *"Immutable structured return type. Beats juggling loose primitives."* |
+| **Per-key locking** (concurrency) | `ConcurrentHashMap.computeIfAbsent` + `synchronized(bucket)` | *"Different clients never block each other. Only same-client requests serialize."* |
+
+### Patterns for Step 5 extensibility
+
+| Follow-up trigger | Pattern | The one-line move |
+|-------------------|---------|-------------------|
+| "Add a new algorithm (Fixed Window Counter)" | **Strategy (extend)** ⭐ | *"New `FixedWindowLimiter implements Limiter`. One switch case in the factory. Zero changes to RateLimiter or existing algorithms."* |
+| "Config from YAML at startup" | **Factory (already there — just extend)** | *"That's what LimiterFactory does today; a new algorithm = 1 new class + 1 new switch case."* |
+| "Distributed (Redis-backed)" | **Strategy** | *"`RedisTokenBucketLimiter implements Limiter`. Lua script makes read-refill-write atomic on Redis — no distributed lock needed."* |
+| "Memory grows with millions of clients" | **Background sweeper** (concurrency, not GoF) | *"`ScheduledExecutorService` evicts buckets where `lastRefillTime < now - TTL`. Active clients never get evicted."* |
+| "Add metrics per endpoint" | **Decorator** | *"`MeteredLimiter(Limiter delegate)` wraps each registered limiter, counts allow/deny. Stackable — MetricsDecorator + LoggingDecorator + …"* |
+| "Per-user tier overrides (premium vs free)" | **Composition** (two-tier map lookup) | *"Second `overrides` map keyed by `clientId:endpoint`. Two-tier lookup: overrides → endpoint → default."* |
+| "Different cost per endpoint" | **Interface extension** | *"Extend `allow(clientId, int cost)`. `/search` costs 1 token, `/ml-inference` costs 10. Same bucket, different consumption."* |
+| "Fail-open vs fail-closed" | Design values choice | *"Catch exception in `RateLimiter.allow`; return `allow(0)` (fail-open) for API gateways so limiter bugs don't take down traffic."* |
+
+### Patterns to actively refuse
+
+- **Singleton on RateLimiter** — kills tests; DI a single instance.
+- **State pattern on Bucket** — a Bucket has no per-state behavior; it's just mutable data.
+- **Observer for metrics** — Decorator is cleaner; Observer would need every Limiter to know about listeners.
+- **Builder for the 2-arg `TokenBucketLimiter(capacity, refillRate)` ctor** — academic noise.
+
+### The rule to sound natural
+
+1. **Strategy + Factory are non-negotiable in the base** — 2 algorithms on day 1 AND config-driven construction mandate both.
+2. **Cap total patterns at 3** in the base (Strategy + Factory + Facade). Any more is over-engineering for a 45-min round.
+3. **Pair each pattern with a concrete win.** *"Factory — because raw JSON needs to be mapped to a class at runtime"* > *"I'd use Factory."*
+
+---
+
 ## Common Mistakes That Lose Points
 
 - **`int` tokens** — 100ms at 1/s = 0.1 tokens. Int rounds to 0 → bucket never refills.
