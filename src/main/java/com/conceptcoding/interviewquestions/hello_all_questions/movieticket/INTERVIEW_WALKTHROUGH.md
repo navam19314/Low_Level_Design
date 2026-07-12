@@ -105,46 +105,40 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 
 ### Clarifying dialogue
 
-**You:** *"Users search by movie title AND browse a specific theater — both flows return showtimes. Right?"*
-**Interviewer:** *"Yes, both."*
+**You:** *"Users need to list showtimes — by movie title or by theater — then book seats. Right?"*
+**Interviewer:** *"Yes."*
+> One "list showtimes" concept, two entry points. Justifies Movie + Theater as entities.
 
-**You:** *"Are all screens the same layout, or variable? Any seat tiers (premium / recliner)?"*
-**Interviewer:** *"Uniform layout across all screens for v1. All seats identical, no tiers."*
-> Signals no `Seat` or `Screen` class needed. Layout is a constant.
+**You:** *"Users book by picking specific seat ids — multiple in one booking, all-or-nothing if any is taken?"*
+**Interviewer:** *"Yes, multi-seat atomic. If one seat is taken the whole booking fails."*
+> Signals the atomic multi-seat check.
 
-**You:** *"When users book, they pick specific seat ids from a map — multiple in one booking?"*
-**Interviewer:** *"Yes, multiple seats per booking. All-or-nothing if any seat is taken."*
-> Signals the atomic multi-seat requirement.
-
-**You:** *"Concurrency — if two users click the same seat at the same instant, exactly one wins?"*
+**You:** *"Concurrency — two users click the same seat at the same instant, exactly one wins?"*
 **Interviewer:** *"Exactly one. This is the important requirement."*
 > Signals `synchronized` on `Showtime.book` — the load-bearing decision.
 
-**You:** *"For v1, is cancellation in scope, or should I focus on the booking flow first?"*
-**Interviewer:** *"Focus on booking first. Cancellation can be a follow-up."*
-> Cancellation moves to Step 5 — that's ~30 lines of code out of v1.
-
-**You:** *"Out of scope for v1 — payment processing, pricing / tiers, UI, ranking in search?"*
-**Interviewer:** *"Correct. Focus on the booking logic and concurrency."*
+**You:** *"For v1, is cancellation in scope? And I'll assume uniform seat layout across screens — no per-screen sizes, no seat tiers?"*
+**Interviewer:** *"Focus on booking first — cancellation is a follow-up. Uniform layout is fine."*
+> Both simplifications: cancellation → Step 5, uniform layout means no `Seat`/`Screen` class needed.
 
 ### Requirements to write down
 
 ```
-IN SCOPE
-1. Search movies by title (case-insensitive substring).
-2. Browse showtimes at a given theater.
-3. Uniform seat layout across all screens (e.g. rows A-Z, seats 0-20).
-4. Book multiple seats atomically; returns a confirmation id.
-5. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
-6. Filter out past showtimes from search/browse.
+IN SCOPE (all 3 test something the interviewer is grading)
+1. List showtimes — by movie title or by theater.
+2. Book multiple seats atomically — all-or-nothing if any seat is taken.
+3. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
+
+ASSUMED (not requirements — simplifications we agreed on)
+- Uniform seat layout (rows A-Z, seats 0-20) — no per-screen sizes.
+- All seats identical — no tiers.
+- Payment assumed successful.
 
 OUT OF SCOPE (all Step-5 extensions)
 - Cancellation
-- Payment processing (assume success)
-- Seat tiers / variable pricing
-- Variable seat layouts
-- UI / ranking in search
+- Variable pricing / seat tiers
 - Temporary seat holds during checkout
+- UI / search ranking
 ```
 
 ---
@@ -237,7 +231,6 @@ Compact map of what to add and when:
 |-------------|------------------------------|
 | Search + browse | `List<Theater> theaters` |
 | Route `book` by showtime id | `Map<String, Showtime> showtimesById` |
-| Future-only filter | `LocalDateTime.now()` used inline in `searchMovies` / `getShowtimesAtTheater` |
 
 > **Why only one index?** *"`book` needs O(1) resolution of a showtime id → keep `showtimesById`. Search just scans all showtimes and filters by title — O(S), and at interview scale (hundreds of showtimes) that's nothing. I'd only add a title index if search became a measured hot path. Fewer indexes = fewer invariants to keep in sync."*
 
@@ -362,10 +355,9 @@ public Reservation book(String showtimeId, List<String> seatIds) {
 public List<Showtime> searchMovies(String title) {
     if (title == null || title.isEmpty()) return new ArrayList<>();
     String query = title.toLowerCase();
-    LocalDateTime now = LocalDateTime.now();
     List<Showtime> results = new ArrayList<>();
     for (Showtime s : showtimesById.values()) {
-        if (s.getMovie().getTitle().toLowerCase().contains(query) && s.getDatetime().isAfter(now)) {
+        if (s.getMovie().getTitle().toLowerCase().contains(query)) {
             results.add(s);
         }
     }
@@ -373,7 +365,7 @@ public List<Showtime> searchMovies(String title) {
 }
 ```
 
-> *"One scan over showtimes, filter by title + future. Returns showtimes directly — not movies — so the UI doesn't need a follow-up call to ask 'where is each movie playing?' One round-trip, complete result."*
+> *"One scan over showtimes, filter by title. Returns showtimes directly — not movies — so the UI doesn't need a follow-up call to ask 'where is each movie playing?' One round-trip, complete result."*
 
 ### 4.4 Dry-run — the 2-thread race (say this at the board)
 
@@ -648,7 +640,7 @@ Let `S` = total showtimes, `M` = movies, `R` = reservations on one showtime, `K`
 |-----------|------|-------|
 | Constructor (index build) | **O(S)** | One pass builds `showtimesById` |
 | `searchMovies(title)` | **O(S)** | Scan all showtimes, filter by title + future |
-| `getShowtimesAtTheater` | **O(showtimes at that theater)** | Single pass + future filter |
+| `getShowtimesAtTheater` | **O(showtimes at that theater)** | Single pass |
 | `book(showtimeId, K seats)` | **O(K · R)** | `isAvailable` is O(R) per seat |
 | `cancelReservation(id)` *(Step-5)* | **O(1)** hash lookup + **O(R)** list remove | Back-ref on Reservation makes lookup O(1) |
 

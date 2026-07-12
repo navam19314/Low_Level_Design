@@ -18,17 +18,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BookingSystemDriver {
 
     public static void main(String[] args) throws Exception {
-        // Use showtimes in the near future so the "future filter" doesn't drop them.
-        LocalDateTime base = LocalDateTime.now().plusHours(2);
-
         // ---- Build catalog: 1 theater, 2 movies, 3 showtimes ----
         Movie inception = new Movie("M1", "Inception");
         Movie dune      = new Movie("M2", "Dune");
 
         Theater amc = new Theater("T1", "AMC");
-        amc.addShowtime(new Showtime("S1", amc, inception, base.plusHours(1), "Screen 3"));
-        amc.addShowtime(new Showtime("S2", amc, inception, base.plusHours(4), "Screen 3"));
-        amc.addShowtime(new Showtime("S3", amc, dune,      base.plusHours(2), "Screen 5"));
+        amc.addShowtime(new Showtime("S1", amc, inception, LocalDateTime.of(2026, 7, 1, 19, 0), "Screen 3"));
+        amc.addShowtime(new Showtime("S2", amc, inception, LocalDateTime.of(2026, 7, 1, 22, 0), "Screen 3"));
+        amc.addShowtime(new Showtime("S3", amc, dune,      LocalDateTime.of(2026, 7, 1, 20, 0), "Screen 5"));
 
         BookingSystem system = new BookingSystem(List.of(amc));
 

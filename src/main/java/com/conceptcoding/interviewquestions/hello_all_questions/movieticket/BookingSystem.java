@@ -4,7 +4,6 @@ import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.mode
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,8 +13,7 @@ import java.util.UUID;
 
 // Orchestrator + facade. Owns theaters and ONE index — showtimesById — so book()
 // resolves a showtime id in O(1). Search just scans showtimes and filters by title;
-// at interview scale that's plenty. (If search became hot, a title index would help —
-// a Step-5 answer.)
+// at interview scale that's plenty.
 //
 // The concurrency-interesting code lives on Showtime. BookingSystem just creates
 // the Reservation and hands it off. Cancellation is a Step-5 extension.
@@ -34,29 +32,22 @@ public class BookingSystem {
         }
     }
 
-    // Case-insensitive substring match on title; returns future showtimes only.
+    // Case-insensitive substring match on title.
     public List<Showtime> searchMovies(String title) {
         if (title == null || title.isEmpty()) return new ArrayList<>();
         String query = title.toLowerCase();
-        LocalDateTime now = LocalDateTime.now();
         List<Showtime> results = new ArrayList<>();
         for (Showtime s : showtimesById.values()) {
-            if (s.getMovie().getTitle().toLowerCase().contains(query) && s.getDatetime().isAfter(now)) {
+            if (s.getMovie().getTitle().toLowerCase().contains(query)) {
                 results.add(s);
             }
         }
         return results;
     }
 
-    // Returns only future showtimes — past ones aren't bookable.
     public List<Showtime> getShowtimesAtTheater(Theater theater) {
         if (theater == null) return new ArrayList<>();
-        LocalDateTime now = LocalDateTime.now();
-        List<Showtime> results = new ArrayList<>();
-        for (Showtime s : theater.getShowtimes()) {
-            if (s.getDatetime().isAfter(now)) results.add(s);
-        }
-        return results;
+        return new ArrayList<>(theater.getShowtimes());
     }
 
     // Create the Reservation up front (just a data object, no state change yet),
