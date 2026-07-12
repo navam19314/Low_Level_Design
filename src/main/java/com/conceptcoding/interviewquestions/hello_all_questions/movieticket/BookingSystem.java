@@ -1,6 +1,7 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Booking;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.City;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
@@ -11,38 +12,35 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
-// Orchestrator + facade. Owns theaters and ONE index — showtimesById — so book()
-// resolves a showtime id in O(1). Search just scans showtimes and filters by title;
-// at interview scale that's plenty.
+// Orchestrator + facade. Owns cities (each holding theaters, each holding showtimes)
+// and ONE index — showtimesById — so book() resolves a showtime id in O(1).
+// Search scans showtimes within one city and filters by title.
 //
 // The concurrency-interesting code lives on Showtime. BookingSystem just creates
 // the Booking and hands it off. Cancellation is a Step-5 extension.
 public class BookingSystem {
 
-    private final List<Theater>          theaters;
+    private final Map<String, City>      citiesById;
     private final Map<String, Showtime>  showtimesById;
 
-    public BookingSystem(List<Theater> theaters) {
-        this.theaters      = theaters;
+    public BookingSystem(List<City> cities) {
+        this.citiesById    = new HashMap<>();
         this.showtimesById = new HashMap<>();
-        for (Theater theater : theaters) {
-            for (Showtime showtime : theater.getShowtimes()) {
+        for (City city : cities) {
+            citiesById.put(city.getId(), city);
+            // Ask the city for its showtimes — don't walk the hierarchy from here.
+            for (Showtime showtime : city.getAllShowtimes()) {
                 showtimesById.put(showtime.getId(), showtime);
             }
         }
     }
 
-    // Case-insensitive substring match on title.
-    public List<Showtime> searchMovies(String title) {
+    // Search movies by title within a specific city (BookMyShow-style — city first).
+    // Just resolve the city and delegate — City walks its own hierarchy. LoD-clean.
+    public List<Showtime> searchMovies(String cityId, String title) {
         if (title == null || title.isEmpty()) return new ArrayList<>();
-        String query = title.toLowerCase();
-        List<Showtime> results = new ArrayList<>();
-        for (Showtime s : showtimesById.values()) {
-            if (s.getMovie().getTitle().toLowerCase().contains(query)) {
-                results.add(s);
-            }
-        }
-        return results;
+        City city = citiesById.get(cityId);
+        return city == null ? new ArrayList<>() : city.findShowtimesByTitle(title);
     }
 
     public List<Showtime> getShowtimesAtTheater(Theater theater) {

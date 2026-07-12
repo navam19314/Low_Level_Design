@@ -23,30 +23,32 @@ public class Showtime {
     private static final int  MAX_SEAT = 20;
 
     private final String id;
-    private final Theater theater;
+    private final Screen screen;
     private final Movie movie;
     private final LocalDateTime datetime;
-    private final String screenLabel;
     private final List<Booking> bookings;
 
-    public Showtime(String id, Theater theater, Movie movie, LocalDateTime datetime, String screenLabel) {
+    public Showtime(String id, Screen screen, Movie movie, LocalDateTime datetime) {
         this.id = id;
-        this.theater = theater;
+        this.screen = screen;
         this.movie = movie;
         this.datetime = datetime;
-        this.screenLabel = screenLabel;
         this.bookings = new ArrayList<>();
     }
 
-    public String        getId()          { return id; }
-    public Theater       getTheater()     { return theater; }
-    public Movie         getMovie()       { return movie; }
-    public LocalDateTime getDatetime()    { return datetime; }
-    public String        getScreenLabel() { return screenLabel; }
+    public String        getId()       { return id; }
+    public Screen        getScreen()   { return screen; }
+    public Movie         getMovie()    { return movie; }
+    public LocalDateTime getDatetime() { return datetime; }
 
     // Defensive copy — callers can't mutate our internal list.
     public List<Booking> getBookings() {
         return new ArrayList<>(bookings);
+    }
+
+    // Delegates to Movie — search doesn't reach through us into Movie's internals.
+    public boolean matchesTitle(String query) {
+        return movie.titleContains(query);
     }
 
     // A seat is available iff no existing booking claims it.

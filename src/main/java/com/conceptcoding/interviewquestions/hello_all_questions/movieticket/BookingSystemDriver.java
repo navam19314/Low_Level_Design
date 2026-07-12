@@ -1,7 +1,9 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Movie;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Booking;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.City;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Movie;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Screen;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
@@ -18,21 +20,30 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BookingSystemDriver {
 
     public static void main(String[] args) throws Exception {
-        // ---- Build catalog: 1 theater, 2 movies, 3 showtimes ----
+        // ---- Build catalog: City → Theater → Screen → Showtime ----
         Movie inception = new Movie("M1", "Inception");
         Movie dune      = new Movie("M2", "Dune");
 
+        Screen screen3 = new Screen("SC3", "Screen 3");
+        Screen screen5 = new Screen("SC5", "Screen 5");
+
+        screen3.addShowtime(new Showtime("S1", screen3, inception, LocalDateTime.of(2026, 7, 1, 19, 0)));
+        screen3.addShowtime(new Showtime("S2", screen3, inception, LocalDateTime.of(2026, 7, 1, 22, 0)));
+        screen5.addShowtime(new Showtime("S3", screen5, dune,      LocalDateTime.of(2026, 7, 1, 20, 0)));
+
         Theater amc = new Theater("T1", "AMC");
-        amc.addShowtime(new Showtime("S1", amc, inception, LocalDateTime.of(2026, 7, 1, 19, 0), "Screen 3"));
-        amc.addShowtime(new Showtime("S2", amc, inception, LocalDateTime.of(2026, 7, 1, 22, 0), "Screen 3"));
-        amc.addShowtime(new Showtime("S3", amc, dune,      LocalDateTime.of(2026, 7, 1, 20, 0), "Screen 5"));
+        amc.addScreen(screen3);
+        amc.addScreen(screen5);
 
-        BookingSystem system = new BookingSystem(List.of(amc));
+        City bengaluru = new City("BLR", "Bengaluru");
+        bengaluru.addTheater(amc);
 
-        System.out.println("--- Search 'inception' ---");
-        for (Showtime s : system.searchMovies("inception")) {
+        BookingSystem system = new BookingSystem(List.of(bengaluru));
+
+        System.out.println("--- Search 'inception' in Bengaluru ---");
+        for (Showtime s : system.searchMovies("BLR", "inception")) {
             System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime()
-                    + " in " + s.getScreenLabel());
+                    + " in " + s.getScreen().getName());
         }
 
         System.out.println("\n--- Browse AMC ---");

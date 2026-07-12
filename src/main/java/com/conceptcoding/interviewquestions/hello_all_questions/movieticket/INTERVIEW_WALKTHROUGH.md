@@ -26,11 +26,11 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 ### M1. The booking flow (two entry points → one Showtime → atomic mutation)
 
 ```
-   Two entry points:
-     (a) search by title           (b) browse by theater
-              │                             │
-              v                             v
-     searchMovies("Inception")   getShowtimesAtTheater(amc)
+   Two entry points (both after user picks a city):
+     (a) search by title                 (b) browse by theater
+              │                                   │
+              v                                   v
+     searchMovies("BLR", "Inception")    getShowtimesAtTheater(amc)
               └────── both return ─────────┘
                        List<Showtime>
                               │
@@ -105,9 +105,9 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 
 ### Clarifying dialogue
 
-**You:** *"Users need to list showtimes — by movie title or by theater — then book seats. Right?"*
+**You:** *"BookMyShow-style — users pick a city first, then search movies by title OR browse a specific theater, then book seats?"*
 **Interviewer:** *"Yes."*
-> One "list showtimes" concept, two entry points. Justifies Movie + Theater as entities.
+> Justifies City, Theater, and Movie as entities.
 
 **You:** *"Users book by picking specific seat ids — multiple in one booking, all-or-nothing if any is taken?"*
 **Interviewer:** *"Yes, multi-seat atomic. If one seat is taken the whole booking fails."*
@@ -117,15 +117,15 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 **Interviewer:** *"Exactly one. This is the important requirement."*
 > Signals `synchronized` on `Showtime.book` — the load-bearing decision.
 
-**You:** *"For v1, is cancellation in scope? And I'll assume uniform seat layout across screens — no per-screen sizes, no seat tiers?"*
+**You:** *"For v1, is cancellation in scope? And I'll assume uniform seat layout across all screens — no per-screen sizes, no seat tiers?"*
 **Interviewer:** *"Focus on booking first — cancellation is a follow-up. Uniform layout is fine."*
-> Both simplifications: cancellation → Step 5, uniform layout means no `Seat`/`Screen` class needed.
+> Both simplifications: cancellation → Step 5, uniform layout keeps `Seat` as a string (Seat class is Step-5-if-tiers-arrive).
 
 ### Requirements to write down
 
 ```
 IN SCOPE (all 3 test something the interviewer is grading)
-1. List showtimes — by movie title or by theater.
+1. List showtimes — search by movie title within a city, or browse a specific theater.
 2. Book multiple seats atomically — all-or-nothing if any seat is taken.
 3. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
 
@@ -148,48 +148,46 @@ OUT OF SCOPE (all Step-5 extensions)
 ```
 Entities
 - BookingSystem   orchestrator + facade — search, browse, book
-- Theater         named location, owns showtimes
+- City            groups theaters — id + name + List<Theater>
+- Theater         named location — id + name + List<Screen>
+- Screen          physical screen inside a theater — id + name + List<Showtime>
 - Showtime        THE bookable unit — owns bookings + concurrency control
 - Movie           searchable record — id + title
-- Booking     immutable — bookingId + seatIds
+- Booking         immutable — bookingId + seatIds
 
-NOT entities (string fields instead)
+NOT entities (string field instead)
 - Seat            no state, no rules      → just `String seatId`
-- Screen          uniform layout          → just `String screenLabel`
 
-Relationships
-- BookingSystem owns    List<Theater>
-- BookingSystem indexes showtimesById            (ONE index — needed for O(1) book)
-- Theater       owns    List<Showtime>
-- Showtime      back-refs Theater (for navigation)
+Relationships (full BookMyShow hierarchy)
+- BookingSystem owns    Map<String, City> citiesById     (routes searches by city)
+- BookingSystem indexes showtimesById                    (O(1) book resolution)
+- City          owns    List<Theater>
+- Theater       owns    List<Screen>
+- Screen        owns    List<Showtime>
+- Showtime      back-refs Screen (for navigation)
 - Showtime      refs    Movie
-- Showtime      owns    List<Booking>       ← SINGLE source of truth for seats
-- Booking   owns    List<String> seatIds
+- Showtime      owns    List<Booking>                    ← SINGLE source of truth for seats
+- Booking       owns    List<String> seatIds
 ```
 
 > **Note:** cancellation is a Step-5 extension. When it lands, Booking grows a back-ref to Showtime and BookingSystem grows a `bookingsById` index for O(1) cancel-by-confirmation-id.
 
 ### Why no `Seat` class?
 
-> *"Seat has no state we manage and no rules to enforce — it's an identifier, period. A string with built-in equality and hashing is the right choice. If per-seat behavior (tiers, per-seat locking, accessibility flags) comes up later we can promote it — but not before there's a reason."*
+> *"Seat has no state we manage — availability is derived from bookings. A string with built-in equality and hashing is the right choice. If tiers (Premium/Recliner) or per-seat locks come up, we can promote it — but even then, keep availability derived."*
 
-### Why no `Screen` class?
+### The full BookMyShow hierarchy — and the trap to avoid
 
-> *"Once we've agreed all screens share the same layout, Screen has no state or behavior — it's just a label. `String screenLabel` on Showtime is honest."*
+We have `City → Theater → Screen → Showtime` in v1 — every level a class. `Seat` is a deliberate exception. Push back if the interviewer asks for `Seat` to own `SeatStatus`:
 
-### If the interviewer wants a deeper hierarchy (`City → Theater → Screen → Show → Seat`)
+> *"If Seat owns a `SeatStatus` field, we now have TWO sources of truth — the seat's status AND the bookings list. Every book / cancel has to keep both in sync — the exact bug we solved by making bookings the only source of truth. I'd promote Seat only when a requirement demands it (tiers or per-seat locks), and even then keep availability derived."*
 
-Some interviewers push for the BookMyShow-textbook hierarchy — every level a class, `Seat` owning `SeatStatus`. Push back with the concurrency argument:
+Compact map of what to add and when (all Step-5 additions):
 
-> *"If Seat owns a `SeatStatus` field, we now have TWO sources of truth — the seat's status AND the bookings list. Every book / cancel has to keep both in sync — that's the exact bug we solved by making bookings the only source of truth. I'd add `City` if we need location-based search, and promote `Seat` to a class if we need tiers or per-seat locks. But neither adds signal at base level — they land in Step 5 when a requirement pushes for them."*
-
-Compact map of what to add and when:
-
-| Requirement that arrives | Add this class |
-|--------------------------|----------------|
-| "Search by city, not just title" | `City` — owns `List<Theater>`; `BookingSystem` becomes `Map<cityId, City>` |
+| Requirement that arrives | Add this |
+|--------------------------|----------|
 | "Different seat tiers (Premium / Recliner)" | Promote `Seat` to a class — but keep availability derived, not on Seat |
-| "Different screen layouts (IMAX 100 vs intimate 30)" | Promote `Screen` to a class with layout dimensions |
+| "Variable screen layouts (IMAX 100 vs intimate 30)" | Move rows/cols from Showtime's constants onto `Screen` |
 | "Per-seat locking under Marvel-opening-night contention" | Promote `Seat` with its own `ReentrantLock` (sorted acquisition) |
 
 ### Class diagram
@@ -197,28 +195,35 @@ Compact map of what to add and when:
 ```
                   +--------------------------------+
                   |        BookingSystem           |   ← orchestrator + facade
-                  |  search / browse / book        |
+                  |  search(city,title) / browse / book |
                   +--------------------------------+
-                       │
-                       │  showtimesById  (one index — O(1) book)
+                       │  Map<cityId, City> citiesById
+                       │  Map<showtimeId, Showtime> showtimesById  (O(1) book)
                        v
-                     │
-                owns │ List<Theater>
-                     v
-              +-----------+
-              |  Theater  |    id, name, showtimes
-              +-----------+
-                     │  List<Showtime>
-                     v
-              +------------+
-              |  Showtime  |    ← the lock-protected hot spot
-              | bookings|
-              +------------+
-                  /       \
-                 v         v
-          +---------+  +--------------+
-          |  Movie  |  |  Booking | ← bookingId + seatIds
-          +---------+  +--------------+
+                  +----------+
+                  |   City   |    id, name, List<Theater>
+                  +----------+
+                       │
+                       v
+                  +-----------+
+                  |  Theater  |    id, name, List<Screen>
+                  +-----------+
+                       │
+                       v
+                  +----------+
+                  |  Screen  |    id, name, List<Showtime>
+                  +----------+
+                       │
+                       v
+                  +------------+
+                  |  Showtime  |    ← the lock-protected hot spot
+                  |  bookings  |
+                  +------------+
+                     /       \
+                    v         v
+             +---------+  +---------+
+             |  Movie  |  | Booking |    bookingId + seatIds
+             +---------+  +---------+
 ```
 
 ---
@@ -229,21 +234,25 @@ Compact map of what to add and when:
 
 | Requirement | State BookingSystem must own |
 |-------------|------------------------------|
-| Search + browse | `List<Theater> theaters` |
+| Route search by city | `Map<String, City> citiesById` |
 | Route `book` by showtime id | `Map<String, Showtime> showtimesById` |
 
-> **Why only one index?** *"`book` needs O(1) resolution of a showtime id → keep `showtimesById`. Search just scans all showtimes and filters by title — O(S), and at interview scale (hundreds of showtimes) that's nothing. I'd only add a title index if search became a measured hot path. Fewer indexes = fewer invariants to keep in sync."*
+> **Why only two indexes?** *"`book` needs O(1) resolution of a showtime id → `showtimesById`. Search starts with a city, so we need `citiesById`. Within a city, we scan its theaters and their showtimes — O(showtimes-in-city), nothing at interview scale. I'd only add a title index if search became a measured hot path."*
 
 ### BookingSystem — public API (3 methods)
 
 ```java
 public class BookingSystem {
-    private final List<Theater>          theaters;
-    private final Map<String, Showtime>  showtimesById;   // the only index
+    private final Map<String, City>      citiesById;
+    private final Map<String, Showtime>  showtimesById;
 
-    public List<Showtime> searchMovies(String title);
+    public BookingSystem(List<City> cities) {
+        // build citiesById; ask each city for its showtimes to build showtimesById (LoD)
+    }
+
+    public List<Showtime> searchMovies(String cityId, String title);   // city first, then title
     public List<Showtime> getShowtimesAtTheater(Theater theater);
-    public Booking    book(String showtimeId, List<String> seatIds);
+    public Booking        book(String showtimeId, List<String> seatIds);
 }
 ```
 
@@ -252,24 +261,25 @@ public class BookingSystem {
 | Requirement | State Showtime owns |
 |-------------|--------------------|
 | Track booked seats | `List<Booking> bookings` — single source of truth |
-| Show what's playing where/when | `Theater theater`, `Movie movie`, `LocalDateTime datetime`, `String screenLabel` |
+| Show what's playing where/when | `Screen screen`, `Movie movie`, `LocalDateTime datetime` |
 | Concurrency | `synchronized` on `book` |
 
 ```java
 public class Showtime {
-    private final String id, screenLabel;
-    private final Theater theater;
+    private final String id;
+    private final Screen screen;                 // back-ref up the hierarchy
     private final Movie movie;
     private final LocalDateTime datetime;
-    private final List<Booking> bookings;    // single source of truth
+    private final List<Booking> bookings;        // single source of truth
 
     public boolean            isAvailable(String seatId);
     public List<String>       getAvailableSeats();
-    public synchronized void  book(Booking r);   // atomic check+store
+    public boolean            matchesTitle(String query);  // delegates to movie — LoD-clean
+    public synchronized void  book(Booking b);   // atomic check+store
 }
 ```
 
-### Booking & Theater & Movie — thin data holders
+### Booking & City & Theater & Screen & Movie — thin data holders
 
 ```java
 public class Booking {                           // immutable
@@ -279,14 +289,25 @@ public class Booking {                           // immutable
     // (Step 5 cancellation adds a back-ref to Showtime here)
 }
 
-public class Theater {                               // named location + showtimes
-    private final String id, name;
-    private final List<Showtime> showtimes;
-    public void addShowtime(Showtime s);              // two-phase setup (Showtime needs back-ref)
+public class City {                              // id, name, List<Theater>
+    public void addTheater(Theater t);
+    public List<Showtime> getAllShowtimes();                     // flatten across theaters
+    public List<Showtime> findShowtimesByTitle(String query);    // delegates to each theater
 }
 
-public class Movie {                                 // immutable record
-    private final String id, title;
+public class Theater {                           // id, name, List<Screen>
+    public void addScreen(Screen s);
+    public List<Showtime> getShowtimes();                        // flatten across screens
+    public List<Showtime> findShowtimesByTitle(String query);    // delegates to each screen
+}
+
+public class Screen {                            // id, name, List<Showtime>
+    public void addShowtime(Showtime s);                         // two-phase setup
+    public List<Showtime> findShowtimesByTitle(String query);    // asks each Showtime
+}
+
+public class Movie {                             // id, title
+    public boolean titleContains(String query);  // owns the string; case-insensitive match
 }
 ```
 
@@ -349,21 +370,47 @@ public Booking book(String showtimeId, List<String> seatIds) {
 
 > **Senior callout:** *"`showtime.book` runs under its lock. If it throws, the caller sees the exception and no state has changed anywhere. When cancellation is added (Step 5) we'll introduce a `bookingsById` map — and the order will matter then: put ONLY after the book succeeds so orphan entries can't leak in from rejected bookings."*
 
-### 4.3 `searchMovies` — leverage the indexes
+### 4.3 `searchMovies` — city-scoped title search
 
 ```java
-public List<Showtime> searchMovies(String title) {
+// BookingSystem — one hop to City, City handles the rest.
+public List<Showtime> searchMovies(String cityId, String title) {
     if (title == null || title.isEmpty()) return new ArrayList<>();
-    String query = title.toLowerCase();
-    List<Showtime> results = new ArrayList<>();
-    for (Showtime s : showtimesById.values()) {
-        if (s.getMovie().getTitle().toLowerCase().contains(query)) {
-            results.add(s);
-        }
-    }
-    return results;
+    City city = citiesById.get(cityId);
+    return city == null ? new ArrayList<>() : city.findShowtimesByTitle(title);
 }
 ```
+
+The search **cascades down** — each level talks only to its direct children. This is Law of Demeter applied to the whole hierarchy:
+
+```java
+// City → asks each Theater
+public List<Showtime> findShowtimesByTitle(String query) {
+    List<Showtime> result = new ArrayList<>();
+    for (Theater t : theaters) result.addAll(t.findShowtimesByTitle(query));
+    return result;
+}
+
+// Theater → asks each Screen  (same shape)
+// Screen  → asks each Showtime "do you match?"
+public List<Showtime> findShowtimesByTitle(String query) {
+    List<Showtime> result = new ArrayList<>();
+    for (Showtime s : showtimes) if (s.matchesTitle(query)) result.add(s);
+    return result;
+}
+
+// Showtime → asks Movie "does your title match?"
+public boolean matchesTitle(String query) { return movie.titleContains(query); }
+
+// Movie → owns the string; does the actual match
+public boolean titleContains(String query) {
+    return title.toLowerCase().contains(query.toLowerCase());
+}
+```
+
+> **Senior callout — Law of Demeter:** *"No method chains through the hierarchy. `s.getMovie().getTitle().toLowerCase().contains(query)` would violate LoD — three levels of reach. Instead each type exposes one behaviour method: Movie owns `titleContains`, Showtime owns `matchesTitle`, and each container level exposes `findShowtimesByTitle`. If Movie renames `title` to `name` tomorrow, only Movie's own method changes — nothing else does."*
+
+> *"City-first search matches how BookMyShow actually works — you pick a city, then search movies. Unknown city returns empty (not a throw) — the caller may be exploring."*
 
 > *"One scan over showtimes, filter by title. Returns showtimes directly — not movies — so the UI doesn't need a follow-up call to ask 'where is each movie playing?' One round-trip, complete result."*
 
@@ -571,6 +618,7 @@ public void book(List<Seat> seats) {
 | **Facade** | `BookingSystem` | *"Callers only touch BookingSystem — 3 methods hide the theaters, the showtime index, and the concurrency-protected Showtimes."* |
 | **Information Expert** (GRASP) | `Showtime.book` lives on Showtime | *"Only Showtime knows about its bookings, so it owns the atomic mutation."* |
 | **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.bookings` | *"BookingSystem creates a Booking and TELLS Showtime to store it. It never mutates the list from outside."* |
+| **Law of Demeter** | Search cascades through the hierarchy | *"BookingSystem asks City → City asks Theater → Theater asks Screen → Screen asks Showtime → Showtime asks Movie. Each method talks only to its direct collaborators. No `s.getMovie().getTitle()...` chains."* |
 | **Single Source of Truth** | `Showtime.bookings` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
 | **Immutability** | `Movie`, `Booking` | *"Immutable after construction; defensive copies of `seatIds` in both directions."* |
 | **Immutability** | `LocalDateTime datetime` on Showtime is `final` | *"A showtime's scheduled time doesn't change once created."* |
@@ -588,7 +636,7 @@ public void book(List<Seat> seats) {
 | "Multiple kinds of theaters (IMAX, drive-in)" | **Factory** | *"`TheaterFactory.create(kind)` returns a preconfigured Theater with the right layout."* |
 | "Persist across restart" | **Repository** | *"Inject `BookingRepository`; write on every book/cancel; replay on boot to rebuild indexes."* |
 | "Multi-region / multi-country" | **Facade + Composition** | *"`MultiRegionBookingSystem` is a Facade over `Map<region, BookingSystem>` that routes by region."* |
-| "Variable seat layouts (IMAX 100 seats vs intimate 30 seats)" | **Builder** | *"`ScreenBuilder` with `.row('A', 20).row('B', 18)…` — each Screen has its own dimensions."* |
+| "Variable screen layouts (IMAX 100 vs intimate 30)" | Move constants onto `Screen` | *"Screen is already a class — add `rows` and `cols` fields; Showtime asks its Screen for dimensions."* |
 
 ### Patterns to actively refuse if the interviewer baits you
 
@@ -608,7 +656,7 @@ public void book(List<Seat> seats) {
 ## What is expected at each level
 
 ### Junior (SDE-1)
-- Arrives at 5 entities with a nudge; may promote Seat / Screen to classes without justification.
+- Arrives at the domain entities with a nudge; may promote Seat to a class without justification.
 - Implements happy-path `book`; misses the `synchronized` keyword until prompted.
 - May maintain both `bookings` list AND a `bookedSeats` set (two sources of truth).
 - No dry-run of the race condition unless explicitly asked.
@@ -639,7 +687,7 @@ Let `S` = total showtimes, `M` = movies, `R` = bookings on one showtime, `K` = s
 | Operation | Time | Notes |
 |-----------|------|-------|
 | Constructor (index build) | **O(S)** | One pass builds `showtimesById` |
-| `searchMovies(title)` | **O(S)** | Scan all showtimes, filter by title + future |
+| `searchMovies(cityId, title)` | **O(showtimes in city)** | Walk city → theaters → showtimes; filter by title |
 | `getShowtimesAtTheater` | **O(showtimes at that theater)** | Single pass |
 | `book(showtimeId, K seats)` | **O(K · R)** | `isAvailable` is O(R) per seat |
 | `cancelBooking(id)` *(Step-5)* | **O(1)** hash lookup + **O(R)** list remove | Back-ref on Booking makes lookup O(1) |
@@ -685,7 +733,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 
 ## 30-second summary (memorize for closing)
 
-> *"Five classes: BookingSystem, Theater, Showtime, Booking, Movie. Seat and Screen are strings — no state, no rules. BookingSystem is the facade — owns theaters plus one index, `showtimesById`, for O(1) booking. Search just scans showtimes and filters by title — fine at interview scale. The core architectural call is that `Showtime.bookings` is the SINGLE source of truth for seat state — availability is derived, no separate booked-set to keep in sync. `Showtime.book` is synchronized, so check-then-add is atomic — that's how exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Booking plus a `bookingsById` index; seat holds under the same per-showtime lock; per-seat locking with sorted acquisition for opening-night-of-Marvel scale."*
+> *"Full BookMyShow hierarchy: City → Theater → Screen → Showtime, all as classes, plus Booking, Movie, and BookingSystem as the facade. Seat is a string — deliberately — because if Seat owned SeatStatus we'd have two sources of truth. BookingSystem owns `citiesById` for city-scoped search and `showtimesById` for O(1) book resolution. The core architectural call is that `Showtime.bookings` is the SINGLE source of truth for seat state — availability is derived. `Showtime.book` is synchronized, so check-then-add is atomic — exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Booking plus a `bookingsById` index; seat holds under the same per-showtime lock; promoting Seat to a class for tiers or per-seat locks."*
 
 ---
 
@@ -706,8 +754,10 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 
 | File | Purpose |
 |------|---------|
+| `model/City.java` | Groups theaters — id + name + `List<Theater>` |
 | `model/Movie.java` | Immutable — id + title |
-| `model/Theater.java` | Named location; owns `List<Showtime>`; two-phase setup |
+| `model/Theater.java` | Named location — id + name + `List<Screen>`; two-phase setup |
+| `model/Screen.java` | Physical screen inside a theater — id + name + `List<Showtime>` |
 | `model/Showtime.java` | **The hot class** — synchronized `book`; bookings = single source of truth |
 | `model/Booking.java` | Immutable — bookingId + seatIds |
 | `BookingSystem.java` | Facade — one `showtimesById` index, 3 public methods |

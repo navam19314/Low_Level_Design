@@ -3,40 +3,40 @@ package com.conceptcoding.interviewquestions.hello_all_questions.movieticket.mod
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Named location that owns its list of showtimes. Showtimes are added AFTER
- * construction because each Showtime needs a back-reference to its Theater —
- * classic chicken-and-egg solved with two-phase setup.
- */
+// Named location that owns its screens. Each screen hosts multiple showtimes
+// through the day. Showtimes are attached to Screens, not Theaters directly.
 public class Theater {
 
     private final String id;
     private final String name;
-    private final List<Showtime> showtimes;
+    private final List<Screen> screens;
 
     public Theater(String id, String name) {
         this.id = id;
         this.name = name;
-        this.showtimes = new ArrayList<>();
+        this.screens = new ArrayList<>();
     }
 
-    public String getId()   { return id; }
-    public String getName() { return name; }
+    public String       getId()      { return id; }
+    public String       getName()    { return name; }
+    public List<Screen> getScreens() { return screens; }
 
+    public void addScreen(Screen screen) { screens.add(screen); }
+
+    // Convenience — flatten all showtimes across all screens.
     public List<Showtime> getShowtimes() {
-        return showtimes;
+        List<Showtime> all = new ArrayList<>();
+        for (Screen screen : screens) {
+            all.addAll(screen.getShowtimes());
+        }
+        return all;
     }
 
-    public void addShowtime(Showtime showtime) {
-        showtimes.add(showtime);
-    }
-
-    public List<Showtime> getShowtimesForMovie(Movie movie) {
+    // Search: delegate to each screen. Never reach through screen into individual showtimes.
+    public List<Showtime> findShowtimesByTitle(String query) {
         List<Showtime> result = new ArrayList<>();
-        for (Showtime s : showtimes) {
-            if (s.getMovie().getId().equals(movie.getId())) {
-                result.add(s);
-            }
+        for (Screen screen : screens) {
+            result.addAll(screen.findShowtimesByTitle(query));
         }
         return result;
     }
