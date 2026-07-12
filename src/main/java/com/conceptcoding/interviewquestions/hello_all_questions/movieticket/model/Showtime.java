@@ -1,27 +1,22 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.exception.SeatUnavailableException;
-
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * A specific screening. THE class where the interesting design lives:
- *   - Owns the reservations list — this is the SINGLE source of truth for
- *     which seats are taken. No separate "bookedSeats" set to keep in sync.
- *   - book / cancel are synchronized so the check-then-act sequence is atomic.
- *
- * <p>Per-showtime locking is the right default: short critical sections, no
- * deadlock risk, scales fine for typical traffic. For opening-night-of-Marvel
- * scale you'd push down to per-seat locking — but that's an optimization for
- * when the simple approach becomes a MEASURED bottleneck, not before.
- */
+// A specific screening. THE class where the interesting design lives:
+//   - reservations list is the SINGLE source of truth for booked seats.
+//     No separate bookedSeats set to keep in sync.
+//   - book / cancel are synchronized so the check-then-act sequence is atomic.
+//
+// Per-showtime locking is the right default: short critical sections, no
+// deadlock risk. For opening-night-of-Marvel scale you'd push down to per-seat
+// locking — but only when the simple approach is a MEASURED bottleneck.
 public class Showtime {
 
-    // The fixed seat layout — rows A..Z, seats 0..20 → 26 * 21 = 546 seats per showtime.
+    // Fixed seat layout — rows A..Z, seats 0..20 → 546 seats per showtime.
     private static final char MIN_ROW  = 'A';
     private static final char MAX_ROW  = 'Z';
     private static final int  MIN_SEAT = 0;
@@ -30,11 +25,11 @@ public class Showtime {
     private final String id;
     private final Theater theater;
     private final Movie movie;
-    private final Instant datetime;
+    private final LocalDateTime datetime;
     private final String screenLabel;
     private final List<Reservation> reservations;
 
-    public Showtime(String id, Theater theater, Movie movie, Instant datetime, String screenLabel) {
+    public Showtime(String id, Theater theater, Movie movie, LocalDateTime datetime, String screenLabel) {
         this.id = id;
         this.theater = theater;
         this.movie = movie;
@@ -43,11 +38,11 @@ public class Showtime {
         this.reservations = new ArrayList<>();
     }
 
-    public String  getId()          { return id; }
-    public Theater getTheater()     { return theater; }
-    public Movie   getMovie()       { return movie; }
-    public Instant getDatetime()    { return datetime; }
-    public String  getScreenLabel() { return screenLabel; }
+    public String        getId()          { return id; }
+    public Theater       getTheater()     { return theater; }
+    public Movie         getMovie()       { return movie; }
+    public LocalDateTime getDatetime()    { return datetime; }
+    public String        getScreenLabel() { return screenLabel; }
 
     // Defensive copy — callers can't mutate our internal list.
     public List<Reservation> getReservations() {
@@ -62,7 +57,7 @@ public class Showtime {
         return true;
     }
 
-    // Layout - booked = available.
+    // Layout minus booked seats.
     public List<String> getAvailableSeats() {
         Set<String> booked = new HashSet<>();
         for (Reservation r : reservations) {
@@ -78,10 +73,10 @@ public class Showtime {
         return available;
     }
 
-    // SYNCHRONIZED so the check-then-act is atomic. Without the lock, two threads
+    // SYNCHRONIZED — the check-then-act must be atomic. Without the lock two threads
     // could both pass isAvailable() for the same seat and both add their reservation
-    // — silent double-booking (R6 violated). All-or-nothing: a single unavailable
-    // seat aborts the whole booking with no state change.
+    // (silent double-booking). All-or-nothing: a single unavailable seat aborts the
+    // whole booking with no state change.
     public synchronized void book(Reservation reservation) {
         List<String> seatIds = reservation.getSeatIds();
         if (seatIds == null || seatIds.isEmpty()) {
@@ -96,15 +91,13 @@ public class Showtime {
         // Check availability — STILL inside the lock so no one can sneak in.
         for (String seatId : seatIds) {
             if (!isAvailable(seatId)) {
-                throw new SeatUnavailableException("Seat unavailable: " + seatId);
+                throw new IllegalStateException("Seat unavailable: " + seatId);
             }
         }
         reservations.add(reservation);
     }
 
-    // Removing the reservation frees its seats automatically (isAvailable scans
-    // reservations). Synchronized for the same reason book is — no concurrent
-    // reader sees a half-removed reservation.
+    // Removing the reservation frees its seats automatically.
     public synchronized void cancel(Reservation reservation) {
         reservations.remove(reservation);
     }

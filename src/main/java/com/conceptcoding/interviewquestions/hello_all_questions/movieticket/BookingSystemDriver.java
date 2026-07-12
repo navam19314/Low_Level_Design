@@ -1,14 +1,11 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.exception.SeatUnavailableException;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Movie;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Reservation;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -21,19 +18,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BookingSystemDriver {
 
     public static void main(String[] args) throws Exception {
-        // Fix time at 2026-06-01 10:00 UTC so "future" showtimes are deterministic.
-        MutableClock clock = new MutableClock(Instant.parse("2026-06-01T10:00:00Z"));
+        // Use showtimes in the near future so the "future filter" doesn't drop them.
+        LocalDateTime base = LocalDateTime.now().plusHours(2);
 
         // ---- Build catalog: 1 theater, 2 movies, 3 showtimes ----
         Movie inception = new Movie("M1", "Inception");
         Movie dune      = new Movie("M2", "Dune");
 
         Theater amc = new Theater("T1", "AMC");
-        amc.addShowtime(new Showtime("S1", amc, inception, Instant.parse("2026-06-01T19:00:00Z"), "Screen 3"));
-        amc.addShowtime(new Showtime("S2", amc, inception, Instant.parse("2026-06-01T22:00:00Z"), "Screen 3"));
-        amc.addShowtime(new Showtime("S3", amc, dune,      Instant.parse("2026-06-01T20:00:00Z"), "Screen 5"));
+        amc.addShowtime(new Showtime("S1", amc, inception, base.plusHours(1), "Screen 3"));
+        amc.addShowtime(new Showtime("S2", amc, inception, base.plusHours(4), "Screen 3"));
+        amc.addShowtime(new Showtime("S3", amc, dune,      base.plusHours(2), "Screen 5"));
 
-        BookingSystem system = new BookingSystem(List.of(amc), clock);
+        BookingSystem system = new BookingSystem(List.of(amc));
 
         System.out.println("--- Search 'inception' ---");
         for (Showtime s : system.searchMovies("inception")) {
@@ -50,13 +47,13 @@ public class BookingSystemDriver {
         Reservation r1 = system.book("S1", List.of("A5", "A6"));
         System.out.println("Confirmation: " + r1.getConfirmationId());
 
-        System.out.println("\n--- Same seats again → SeatUnavailableException ---");
+        System.out.println("\n--- Same seats again → IllegalStateException ---");
         try { system.book("S1", List.of("A5")); }
-        catch (SeatUnavailableException e) { System.out.println("Rejected: " + e.getMessage()); }
+        catch (IllegalStateException e) { System.out.println("Rejected: " + e.getMessage()); }
 
         System.out.println("\n--- Partial booking is atomic: A6 taken → whole booking fails ---");
         try { system.book("S1", List.of("A7", "A6", "A8")); }
-        catch (SeatUnavailableException e) {
+        catch (IllegalStateException e) {
             System.out.println("Rejected: " + e.getMessage());
             System.out.println("A7 still available? " + system.book("S1", List.of("A7")).getConfirmationId().substring(0, 8) + "...");
         }
@@ -96,7 +93,7 @@ public class BookingSystemDriver {
                     fire.await();
                     system.book(showtimeId, List.of(seat));
                     successes.incrementAndGet();
-                } catch (SeatUnavailableException e) {
+                } catch (IllegalStateException e) {
                     conflicts.incrementAndGet();
                 } catch (Throwable t) {
                     synchronized (unexpected) { unexpected.add(t); }
@@ -104,7 +101,7 @@ public class BookingSystemDriver {
             });
         }
 
-        ready.await();                  // all threads are at the barrier
+        ready.await();                  // all threads at the barrier
         fire.countDown();               // GO!
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.SECONDS);
@@ -112,13 +109,5 @@ public class BookingSystemDriver {
         System.out.println("  successes = " + successes.get() + "  (expect 1)");
         System.out.println("  conflicts = " + conflicts.get() + "  (expect " + (threadCount - 1) + ")");
         System.out.println("  unexpected = " + unexpected.size() + "  (expect 0)");
-    }
-
-    static final class MutableClock extends Clock {
-        private Instant now;
-        MutableClock(Instant now) { this.now = now; }
-        @Override public Instant instant() { return now; }
-        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
-        @Override public Clock withZone(ZoneId z) { return this; }
     }
 }

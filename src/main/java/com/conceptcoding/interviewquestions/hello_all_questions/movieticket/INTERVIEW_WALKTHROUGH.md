@@ -98,7 +98,7 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
    t=3   add(rA)
    t=4   exits lock              enters lock
    t=5                           isAvailable(A5) → FALSE  ← sees A's mutation
-   t=6                           throws SeatUnavailableException  ✓
+   t=6                           throws IllegalStateException  ✓
 ```
 
 > **The rule:** the entire *check → validate → add* sequence must be one atomic block. Splitting "first check, then add" is the textbook check-then-act race. This is what the interviewer is looking for.
@@ -186,6 +186,21 @@ Relationships
 
 > *"Once we've agreed all screens share the same layout, Screen has no state or behavior — it's just a label. `String screenLabel` on Showtime is honest."*
 
+### If the interviewer wants a deeper hierarchy (`City → Theater → Screen → Show → Seat`)
+
+Some interviewers push for the BookMyShow-textbook hierarchy — every level a class, `Seat` owning `SeatStatus`. Push back with the concurrency argument:
+
+> *"If Seat owns a `SeatStatus` field, we now have TWO sources of truth — the seat's status AND the reservations list. Every book / cancel has to keep both in sync — that's the exact bug we solved by making reservations the only source of truth. I'd add `City` if we need location-based search, and promote `Seat` to a class if we need tiers or per-seat locks. But neither adds signal at base level — they land in Step 5 when a requirement pushes for them."*
+
+Compact map of what to add and when:
+
+| Requirement that arrives | Add this class |
+|--------------------------|----------------|
+| "Search by city, not just title" | `City` — owns `List<Theater>`; `BookingSystem` becomes `Map<cityId, City>` |
+| "Different seat tiers (Premium / Recliner)" | Promote `Seat` to a class — but keep availability derived, not on Seat |
+| "Different screen layouts (IMAX 100 vs intimate 30)" | Promote `Screen` to a class with layout dimensions |
+| "Per-seat locking under Marvel-opening-night contention" | Promote `Seat` with its own `ReentrantLock` (sorted acquisition) |
+
 ### Class diagram
 
 ```
@@ -229,7 +244,7 @@ Relationships
 | Search by title efficiently | `Map<String, Movie> moviesById` + `Map<String, List<Showtime>> showtimesByMovieId` |
 | Route `book` by showtime id | `Map<String, Showtime> showtimesById` |
 | Route `cancel` by confirmation id | `Map<String, Reservation> reservationsById` |
-| Future-only filter | `Clock clock` (injected for testable time) |
+| Future-only filter | `LocalDateTime.now()` used inline in `searchMovies` / `getShowtimesAtTheater` |
 
 > **Why 4 indexes?** *"Naive `searchMovies` walks `O(theaters × showtimes)` on every call. The indexes turn it into `O(matching movies × showtimes per movie)`. All four are built in ONE pass at construction."*
 
@@ -242,7 +257,6 @@ public class BookingSystem {
     private final Map<String, List<Showtime>> showtimesByMovieId;
     private final Map<String, Showtime>       showtimesById;
     private final Map<String, Reservation>    reservationsById;
-    private final Clock                       clock;
 
     public List<Showtime> searchMovies(String title);
     public List<Showtime> getShowtimesAtTheater(Theater theater);
@@ -256,7 +270,7 @@ public class BookingSystem {
 | Requirement | State Showtime owns |
 |-------------|--------------------|
 | Track booked seats | `List<Reservation> reservations` — single source of truth |
-| Show what's playing where/when | `Theater theater`, `Movie movie`, `Instant datetime`, `String screenLabel` |
+| Show what's playing where/when | `Theater theater`, `Movie movie`, `LocalDateTime datetime`, `String screenLabel` |
 | Concurrency | `synchronized` on `book` / `cancel` |
 
 ```java
@@ -264,7 +278,7 @@ public class Showtime {
     private final String id, screenLabel;
     private final Theater theater;
     private final Movie movie;
-    private final Instant datetime;
+    private final LocalDateTime datetime;
     private final List<Reservation> reservations;    // single source of truth
 
     public boolean            isAvailable(String seatId);
@@ -320,7 +334,7 @@ public synchronized void book(Reservation reservation) {
     // Check ALL seats are available BEFORE mutating — all-or-nothing.
     for (String seatId : seatIds) {
         if (!isAvailable(seatId)) {
-            throw new SeatUnavailableException("Seat unavailable: " + seatId);
+            throw new IllegalStateException("Seat unavailable: " + seatId);
         }
     }
     reservations.add(reservation);
@@ -333,7 +347,7 @@ public synchronized void book(Reservation reservation) {
 
 2. *"All-or-nothing: I check EVERY requested seat before adding. If a 3-seat booking has one unavailable seat, the whole thing fails with no partial state. Caller doesn't clean up half-bookings."*
 
-3. *"Three distinct exceptions: `IllegalArgumentException` for bad input, `SeatUnavailableException` for the domain-specific race loss. The caller can tell them apart."*
+3. *"Two exception types: `IllegalArgumentException` for bad input (typo in seat id), `IllegalStateException` for race loss (someone else got the seat). Two distinct kinds of caller mistakes."*
 
 ### 4.2 `BookingSystem.book` — orchestration
 
@@ -383,7 +397,7 @@ public void cancelReservation(String confirmationId) {
 public List<Showtime> searchMovies(String title) {
     if (title == null || title.isEmpty()) return new ArrayList<>();
     String searchLower = title.toLowerCase();
-    Instant now = clock.instant();
+    LocalDateTime now = LocalDateTime.now();
     List<Showtime> results = new ArrayList<>();
     for (Movie movie : moviesById.values()) {
         if (!movie.getTitle().toLowerCase().contains(searchLower)) continue;
@@ -417,7 +431,7 @@ Step 2: Both call showtime.book(reservation). Java's monitor lets ONE inside.
 
    Thread B blocked; now acquires the lock:
       isAvailable("A5") → scans reservations, finds A5 → FALSE
-      throw SeatUnavailableException("A5")
+      throw IllegalStateException("A5")
       exit lock with NO state change                                    ✓
 
 Step 3: Back in BookingSystem.book:
@@ -448,10 +462,10 @@ class Showtime {
 
     public synchronized String holdSeats(List<String> seatIds, Duration timeout) {
         for (String s : seatIds) {
-            if (!isAvailable(s)) throw new SeatUnavailableException(s);
+            if (!isAvailable(s)) throw new IllegalStateException(s);
         }
         SeatHold hold = new SeatHold(UUID.randomUUID().toString(), seatIds,
-                                     clock.instant().plus(timeout));
+                                     LocalDateTime.now().plus(timeout));
         holds.put(hold.id(), hold);
         return hold.id();
     }
@@ -459,7 +473,7 @@ class Showtime {
     public synchronized void confirmHold(String holdId, Reservation r) {
         SeatHold hold = holds.get(holdId);
         if (hold == null) throw new NoSuchElementException("hold gone");
-        if (clock.instant().isAfter(hold.expiresAt())) {
+        if (LocalDateTime.now().isAfter(hold.expiresAt())) {
             holds.remove(holdId);
             throw new HoldExpiredException(holdId);
         }
@@ -511,7 +525,7 @@ public void book(List<Seat> seats) {
     for (Seat s : sorted) s.lock();
     try {
         for (Seat s : sorted) {
-            if (s.isBooked()) throw new SeatUnavailableException(s.id());
+            if (s.isBooked()) throw new IllegalStateException(s.id());
         }
         for (Seat s : sorted) s.markBooked(reservation);
     } finally {
@@ -549,7 +563,7 @@ public void book(List<Seat> seats) {
 | **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.reservations` | *"BookingSystem creates a Reservation and TELLS Showtime to store it. It never mutates the list from outside."* |
 | **Single Source of Truth** | `Showtime.reservations` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
 | **Immutability** | `Movie`, `Reservation` | *"Immutable after construction; defensive copies of `seatIds` in both directions."* |
-| **Dependency Injection** | `Clock` injected into `BookingSystem` | *"Time is testable — advance the clock to check future-showtime filtering without sleeps."* |
+| **Immutability** | `LocalDateTime datetime` on Showtime is `final` | *"A showtime's scheduled time doesn't change once created."* |
 
 **No Strategy / Factory / Builder in the base — deliberately.** *"The one-sentence test fails: search is locked to substring, pricing isn't variable, allocation is user-driven. Hardcode it; refactor if Step 5 asks."*
 
@@ -646,7 +660,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
                 fire.await();
                 bookingSystem.book("S1", List.of("C10"));
                 successes.incrementAndGet();
-            } catch (SeatUnavailableException ignored) {}
+            } catch (IllegalStateException ignored) {}
         });
     }
     fire.countDown();     // all threads race simultaneously
@@ -687,8 +701,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 | `model/Theater.java` | Named location; owns `List<Showtime>`; two-phase setup |
 | `model/Showtime.java` | **The hot class** — synchronized book/cancel; reservations = single source of truth |
 | `model/Reservation.java` | Immutable + back-ref to Showtime |
-| `exception/SeatUnavailableException.java` | Domain exception distinct from IllegalArgument |
-| `BookingSystem.java` | Facade — 4 indexes, injected Clock, 4 public methods |
+| `BookingSystem.java` | Facade — 4 lookup indexes, 4 public methods |
 | `BookingSystemDriver.java` | Scenarios including a real 50-thread race |
 
 Run:
