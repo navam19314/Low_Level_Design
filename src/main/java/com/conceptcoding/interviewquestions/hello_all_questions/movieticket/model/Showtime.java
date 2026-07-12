@@ -7,9 +7,9 @@ import java.util.List;
 import java.util.Set;
 
 // A specific screening. THE class where the interesting design lives:
-//   - reservations list is the SINGLE source of truth for booked seats.
+//   - bookings list is the SINGLE source of truth for booked seats.
 //     No separate bookedSeats set to keep in sync.
-//   - book / cancel are synchronized so the check-then-act sequence is atomic.
+//   - book is synchronized so the check-then-act sequence is atomic.
 //
 // Per-showtime locking is the right default: short critical sections, no
 // deadlock risk. For opening-night-of-Marvel scale you'd push down to per-seat
@@ -27,7 +27,7 @@ public class Showtime {
     private final Movie movie;
     private final LocalDateTime datetime;
     private final String screenLabel;
-    private final List<Reservation> reservations;
+    private final List<Booking> bookings;
 
     public Showtime(String id, Theater theater, Movie movie, LocalDateTime datetime, String screenLabel) {
         this.id = id;
@@ -35,7 +35,7 @@ public class Showtime {
         this.movie = movie;
         this.datetime = datetime;
         this.screenLabel = screenLabel;
-        this.reservations = new ArrayList<>();
+        this.bookings = new ArrayList<>();
     }
 
     public String        getId()          { return id; }
@@ -45,14 +45,14 @@ public class Showtime {
     public String        getScreenLabel() { return screenLabel; }
 
     // Defensive copy — callers can't mutate our internal list.
-    public List<Reservation> getReservations() {
-        return new ArrayList<>(reservations);
+    public List<Booking> getBookings() {
+        return new ArrayList<>(bookings);
     }
 
-    // A seat is available iff no existing reservation claims it.
+    // A seat is available iff no existing booking claims it.
     public boolean isAvailable(String seatId) {
-        for (Reservation r : reservations) {
-            if (r.getSeatIds().contains(seatId)) return false;
+        for (Booking b : bookings) {
+            if (b.getSeatIds().contains(seatId)) return false;
         }
         return true;
     }
@@ -60,8 +60,8 @@ public class Showtime {
     // Layout minus booked seats.
     public List<String> getAvailableSeats() {
         Set<String> booked = new HashSet<>();
-        for (Reservation r : reservations) {
-            booked.addAll(r.getSeatIds());
+        for (Booking b : bookings) {
+            booked.addAll(b.getSeatIds());
         }
         List<String> available = new ArrayList<>();
         for (char row = MIN_ROW; row <= MAX_ROW; row++) {
@@ -74,11 +74,11 @@ public class Showtime {
     }
 
     // SYNCHRONIZED — the check-then-act must be atomic. Without the lock two threads
-    // could both pass isAvailable() for the same seat and both add their reservation
+    // could both pass isAvailable() for the same seat and both add their booking
     // (silent double-booking). All-or-nothing: a single unavailable seat aborts the
     // whole booking with no state change.
-    public synchronized void book(Reservation reservation) {
-        List<String> seatIds = reservation.getSeatIds();
+    public synchronized void book(Booking booking) {
+        List<String> seatIds = booking.getSeatIds();
         if (seatIds == null || seatIds.isEmpty()) {
             throw new IllegalArgumentException("Must select at least one seat");
         }
@@ -94,7 +94,7 @@ public class Showtime {
                 throw new IllegalStateException("Seat unavailable: " + seatId);
             }
         }
-        reservations.add(reservation);
+        bookings.add(booking);
     }
 
     private static boolean isValidSeatId(String seatId) {

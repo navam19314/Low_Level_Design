@@ -1,6 +1,6 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Reservation;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Booking;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
@@ -16,7 +16,7 @@ import java.util.UUID;
 // at interview scale that's plenty.
 //
 // The concurrency-interesting code lives on Showtime. BookingSystem just creates
-// the Reservation and hands it off. Cancellation is a Step-5 extension.
+// the Booking and hands it off. Cancellation is a Step-5 extension.
 public class BookingSystem {
 
     private final List<Theater>          theaters;
@@ -50,10 +50,10 @@ public class BookingSystem {
         return new ArrayList<>(theater.getShowtimes());
     }
 
-    // Create the Reservation up front (just a data object, no state change yet),
+    // Create the Booking up front (just a data object, no state change yet),
     // then hand it to Showtime for atomic check+store. If unavailable, the exception
     // propagates and no state changes anywhere.
-    public Reservation book(String showtimeId, List<String> seatIds) {
+    public Booking book(String showtimeId, List<String> seatIds) {
         if (showtimeId == null || seatIds == null || seatIds.isEmpty()) {
             throw new IllegalArgumentException("Invalid booking request");
         }
@@ -61,8 +61,8 @@ public class BookingSystem {
         if (showtime == null) {
             throw new NoSuchElementException("Showtime not found: " + showtimeId);
         }
-        Reservation reservation = new Reservation(UUID.randomUUID().toString(), seatIds);
-        showtime.book(reservation);                      // atomic — may throw
-        return reservation;
+        Booking booking = new Booking(UUID.randomUUID().toString(), seatIds);
+        showtime.book(booking);                          // atomic — may throw
+        return booking;
     }
 }

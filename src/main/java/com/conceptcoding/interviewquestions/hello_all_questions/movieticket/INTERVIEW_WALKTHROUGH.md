@@ -44,33 +44,33 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
               +-----------------------------------+
                               │
                               v
-                        Reservation (returned to caller)
+                        Booking (returned to caller)
 
    (Cancellation is a Step-5 extension — see E0 below.)
 ```
 
-### M2. The reservations list IS the seat state (single source of truth)
+### M2. The bookings list IS the seat state (single source of truth)
 
 ```
    Naive: Showtime tracks TWO things
-              List<Reservation> reservations
+              List<Booking> bookings
               Set<String>       bookedSeats     ← BUG MAGNET (must stay in sync)
 
    Better: Showtime tracks ONE thing
-              List<Reservation> reservations
-              A seat is "available" iff no reservation.seatIds contains it.
+              List<Booking> bookings
+              A seat is "available" iff no booking.seatIds contains it.
               Availability is DERIVED, not stored.
 
                     +--------------------------+
-                    |    Showtime.reservations |
+                    |    Showtime.bookings |
                     +--------------------------+
-                    | [ Reservation { A5,A6 } ]|
-                    | [ Reservation { B1    } ]|
-                    | [ Reservation { C10   } ]|
+                    | [ Booking { A5,A6 } ]|
+                    | [ Booking { B1    } ]|
+                    | [ Booking { C10   } ]|
                     +--------------------------+
 ```
 
-**Senior soundbite:** *"I'm not maintaining a separate `bookedSeats` set — the reservations list IS the seat state. Every booked seat appears in exactly one reservation; availability is derived. One mutable field, one source of truth."*
+**Senior soundbite:** *"I'm not maintaining a separate `bookedSeats` set — the bookings list IS the seat state. Every booked seat appears in exactly one booking; availability is derived. One mutable field, one source of truth."*
 
 ### M3. The check-then-act race + the fix (THE core signal for this problem)
 
@@ -81,8 +81,8 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
    ────  ──────────              ──────────
    t=1   isAvailable(A5) → true
    t=2                           isAvailable(A5) → true   ← BOTH see it free
-   t=3   reservations.add(rA)
-   t=4                           reservations.add(rB)     ← DOUBLE-BOOKED!
+   t=3   bookings.add(rA)
+   t=4                           bookings.add(rB)     ← DOUBLE-BOOKED!
 
 
    WITH synchronized(this) on Showtime — only one thread inside at a time:
@@ -149,9 +149,9 @@ OUT OF SCOPE (all Step-5 extensions)
 Entities
 - BookingSystem   orchestrator + facade — search, browse, book
 - Theater         named location, owns showtimes
-- Showtime        THE bookable unit — owns reservations + concurrency control
+- Showtime        THE bookable unit — owns bookings + concurrency control
 - Movie           searchable record — id + title
-- Reservation     immutable — confirmationId + seatIds
+- Booking     immutable — bookingId + seatIds
 
 NOT entities (string fields instead)
 - Seat            no state, no rules      → just `String seatId`
@@ -163,11 +163,11 @@ Relationships
 - Theater       owns    List<Showtime>
 - Showtime      back-refs Theater (for navigation)
 - Showtime      refs    Movie
-- Showtime      owns    List<Reservation>       ← SINGLE source of truth for seats
-- Reservation   owns    List<String> seatIds
+- Showtime      owns    List<Booking>       ← SINGLE source of truth for seats
+- Booking   owns    List<String> seatIds
 ```
 
-> **Note:** cancellation is a Step-5 extension. When it lands, Reservation grows a back-ref to Showtime and BookingSystem grows a `reservationsById` index for O(1) cancel-by-confirmation-id.
+> **Note:** cancellation is a Step-5 extension. When it lands, Booking grows a back-ref to Showtime and BookingSystem grows a `bookingsById` index for O(1) cancel-by-confirmation-id.
 
 ### Why no `Seat` class?
 
@@ -181,7 +181,7 @@ Relationships
 
 Some interviewers push for the BookMyShow-textbook hierarchy — every level a class, `Seat` owning `SeatStatus`. Push back with the concurrency argument:
 
-> *"If Seat owns a `SeatStatus` field, we now have TWO sources of truth — the seat's status AND the reservations list. Every book / cancel has to keep both in sync — that's the exact bug we solved by making reservations the only source of truth. I'd add `City` if we need location-based search, and promote `Seat` to a class if we need tiers or per-seat locks. But neither adds signal at base level — they land in Step 5 when a requirement pushes for them."*
+> *"If Seat owns a `SeatStatus` field, we now have TWO sources of truth — the seat's status AND the bookings list. Every book / cancel has to keep both in sync — that's the exact bug we solved by making bookings the only source of truth. I'd add `City` if we need location-based search, and promote `Seat` to a class if we need tiers or per-seat locks. But neither adds signal at base level — they land in Step 5 when a requirement pushes for them."*
 
 Compact map of what to add and when:
 
@@ -212,12 +212,12 @@ Compact map of what to add and when:
                      v
               +------------+
               |  Showtime  |    ← the lock-protected hot spot
-              | reservations|
+              | bookings|
               +------------+
                   /       \
                  v         v
           +---------+  +--------------+
-          |  Movie  |  |  Reservation | ← confirmationId + seatIds
+          |  Movie  |  |  Booking | ← bookingId + seatIds
           +---------+  +--------------+
 ```
 
@@ -243,7 +243,7 @@ public class BookingSystem {
 
     public List<Showtime> searchMovies(String title);
     public List<Showtime> getShowtimesAtTheater(Theater theater);
-    public Reservation    book(String showtimeId, List<String> seatIds);
+    public Booking    book(String showtimeId, List<String> seatIds);
 }
 ```
 
@@ -251,7 +251,7 @@ public class BookingSystem {
 
 | Requirement | State Showtime owns |
 |-------------|--------------------|
-| Track booked seats | `List<Reservation> reservations` — single source of truth |
+| Track booked seats | `List<Booking> bookings` — single source of truth |
 | Show what's playing where/when | `Theater theater`, `Movie movie`, `LocalDateTime datetime`, `String screenLabel` |
 | Concurrency | `synchronized` on `book` |
 
@@ -261,19 +261,19 @@ public class Showtime {
     private final Theater theater;
     private final Movie movie;
     private final LocalDateTime datetime;
-    private final List<Reservation> reservations;    // single source of truth
+    private final List<Booking> bookings;    // single source of truth
 
     public boolean            isAvailable(String seatId);
     public List<String>       getAvailableSeats();
-    public synchronized void  book(Reservation r);   // atomic check+store
+    public synchronized void  book(Booking r);   // atomic check+store
 }
 ```
 
-### Reservation & Theater & Movie — thin data holders
+### Booking & Theater & Movie — thin data holders
 
 ```java
-public class Reservation {                           // immutable
-    private final String        confirmationId;
+public class Booking {                           // immutable
+    private final String        bookingId;
     private final List<String>  seatIds;
     // defensive copy in ctor, defensive copy out of getSeatIds
     // (Step 5 cancellation adds a back-ref to Showtime here)
@@ -292,7 +292,7 @@ public class Movie {                                 // immutable record
 
 ### The principle to say aloud
 
-> *"`book` lives on Showtime — Information Expert. Only Showtime knows about its reservations, so it owns the atomic mutation. BookingSystem doesn't reach into the list; it creates a Reservation and TELLS Showtime to store it. If cancellation lands in Step 5, `cancel` lives on Showtime for the same reason — never as a method on Reservation."*
+> *"`book` lives on Showtime — Information Expert. Only Showtime knows about its bookings, so it owns the atomic mutation. BookingSystem doesn't reach into the list; it creates a Booking and TELLS Showtime to store it. If cancellation lands in Step 5, `cancel` lives on Showtime for the same reason — never as a method on Booking."*
 
 ---
 
@@ -301,8 +301,8 @@ public class Movie {                                 // immutable record
 ### 4.1 `Showtime.book` — the atomic check-and-store (write this FIRST)
 
 ```java
-public synchronized void book(Reservation reservation) {
-    List<String> seatIds = reservation.getSeatIds();
+public synchronized void book(Booking booking) {
+    List<String> seatIds = booking.getSeatIds();
     if (seatIds == null || seatIds.isEmpty()) {
         throw new IllegalArgumentException("Must select at least one seat");
     }
@@ -318,7 +318,7 @@ public synchronized void book(Reservation reservation) {
             throw new IllegalStateException("Seat unavailable: " + seatId);
         }
     }
-    reservations.add(reservation);
+    bookings.add(booking);
 }
 ```
 
@@ -333,7 +333,7 @@ public synchronized void book(Reservation reservation) {
 ### 4.2 `BookingSystem.book` — orchestration
 
 ```java
-public Reservation book(String showtimeId, List<String> seatIds) {
+public Booking book(String showtimeId, List<String> seatIds) {
     if (showtimeId == null || seatIds == null || seatIds.isEmpty()) {
         throw new IllegalArgumentException("Invalid booking request");
     }
@@ -341,13 +341,13 @@ public Reservation book(String showtimeId, List<String> seatIds) {
     if (showtime == null) {
         throw new NoSuchElementException("Showtime not found: " + showtimeId);
     }
-    Reservation reservation = new Reservation(UUID.randomUUID().toString(), seatIds);
-    showtime.book(reservation);                             // atomic — may throw
-    return reservation;
+    Booking booking = new Booking(UUID.randomUUID().toString(), seatIds);
+    showtime.book(booking);                             // atomic — may throw
+    return booking;
 }
 ```
 
-> **Senior callout:** *"`showtime.book` runs under its lock. If it throws, the caller sees the exception and no state has changed anywhere. When cancellation is added (Step 5) we'll introduce a `reservationsById` map — and the order will matter then: put ONLY after the book succeeds so orphan entries can't leak in from rejected bookings."*
+> **Senior callout:** *"`showtime.book` runs under its lock. If it throws, the caller sees the exception and no state has changed anywhere. When cancellation is added (Step 5) we'll introduce a `bookingsById` map — and the order will matter then: put ONLY after the book succeeds so orphan entries can't leak in from rejected bookings."*
 
 ### 4.3 `searchMovies` — leverage the indexes
 
@@ -375,27 +375,27 @@ Setup: showtime "S1" for Inception at 7pm, all 546 seats free.
 Thread A: bookingSystem.book("S1", ["A5"])
 Thread B: bookingSystem.book("S1", ["A5"])     ← same seat!
 
-Step 1: Both threads create Reservation objects (different confirmation ids).
+Step 1: Both threads create Booking objects (different confirmation ids).
         No state change yet — just object construction.
 
-Step 2: Both call showtime.book(reservation). Java's monitor lets ONE inside.
+Step 2: Both call showtime.book(booking). Java's monitor lets ONE inside.
 
    Thread A wins the lock:
-      isAvailable("A5") → true    (reservations empty)
-      reservations.add(reservationA)
+      isAvailable("A5") → true    (bookings empty)
+      bookings.add(bookingA)
       exit lock
 
    Thread B blocked; now acquires the lock:
-      isAvailable("A5") → scans reservations, finds A5 → FALSE
+      isAvailable("A5") → scans bookings, finds A5 → FALSE
       throw IllegalStateException("A5")
       exit lock with NO state change                                    ✓
 
 Step 3: Back in BookingSystem.book:
-   Thread A: returns Reservation A                                      ✓
+   Thread A: returns Booking A                                      ✓
    Thread B: exception propagates                                        ✓
 
 Result:
-   1 success, 1 rejection.  Showtime.reservations contains exactly ONE entry.
+   1 success, 1 rejection.  Showtime.bookings contains exactly ONE entry.
    ⇒ R6 satisfied: exactly one wins.
 ```
 
@@ -409,54 +409,54 @@ Result:
 
 **Three small additions to the base:**
 
-1. Reservation grows a back-ref to its Showtime — so `cancel` routes without scanning.
-2. Showtime gets a `synchronized cancel(reservation)` method.
-3. BookingSystem gets a 4th index `reservationsById` and a public `cancelReservation(confirmationId)`.
+1. Booking grows a back-ref to its Showtime — so `cancel` routes without scanning.
+2. Showtime gets a `synchronized cancel(booking)` method.
+3. BookingSystem gets a 4th index `bookingsById` and a public `cancelBooking(bookingId)`.
 
 ```java
-// On Reservation — add the back-ref
-public class Reservation {
-    private final String confirmationId;
+// On Booking — add the back-ref
+public class Booking {
+    private final String bookingId;
     private final Showtime showtime;                // NEW: back-ref for O(1) routing
     private final List<String> seatIds;
     // updated ctor + getShowtime()
 }
 
 // On Showtime — one new synchronized method
-public synchronized void cancel(Reservation reservation) {
-    reservations.remove(reservation);               // frees seats automatically
+public synchronized void cancel(Booking booking) {
+    bookings.remove(booking);               // frees seats automatically
 }
 
 // On BookingSystem — one new field, one new method, one extra put in book()
-private final Map<String, Reservation> reservationsById = new HashMap<>();
+private final Map<String, Booking> bookingsById = new HashMap<>();
 
-public Reservation book(String showtimeId, List<String> seatIds) {
-    // ... existing checks + Reservation creation ...
-    showtime.book(reservation);
-    reservationsById.put(reservation.getConfirmationId(), reservation);   // NEW
-    return reservation;
+public Booking book(String showtimeId, List<String> seatIds) {
+    // ... existing checks + Booking creation ...
+    showtime.book(booking);
+    bookingsById.put(booking.getBookingId(), booking);   // NEW
+    return booking;
 }
 
-public void cancelReservation(String confirmationId) {
-    if (confirmationId == null || confirmationId.isEmpty()) {
+public void cancelBooking(String bookingId) {
+    if (bookingId == null || bookingId.isEmpty()) {
         throw new IllegalArgumentException("Invalid confirmation ID");
     }
-    Reservation reservation = reservationsById.get(confirmationId);
-    if (reservation == null) {
-        throw new NoSuchElementException("Reservation not found");
+    Booking booking = bookingsById.get(bookingId);
+    if (booking == null) {
+        throw new NoSuchElementException("Booking not found");
     }
-    reservation.getShowtime().cancel(reservation);   // back-ref → O(1) routing
-    reservationsById.remove(confirmationId);
+    booking.getShowtime().cancel(booking);   // back-ref → O(1) routing
+    bookingsById.remove(bookingId);
 }
 ```
 
 **Say aloud (three callouts):**
 
-1. *"The back-ref on Reservation makes cancel O(1) — without it, we'd walk every theater × every showtime × every reservation."*
+1. *"The back-ref on Booking makes cancel O(1) — without it, we'd walk every theater × every showtime × every booking."*
 
-2. *"Order matters in `book`: `showtime.book` runs FIRST under its lock. Only if it succeeds do we `put` into `reservationsById`. Reverse the order and every rejected booking leaks an orphan entry."*
+2. *"Order matters in `book`: `showtime.book` runs FIRST under its lock. Only if it succeeds do we `put` into `bookingsById`. Reverse the order and every rejected booking leaks an orphan entry."*
 
-3. *"Removing from `reservationsById` after successful cancel is what makes double-cancel throw automatically — the second call hits `null` and throws NoSuchElement. Same idempotency trick as ticket-removal in Parking Lot."*
+3. *"Removing from `bookingsById` after successful cancel is what makes double-cancel throw automatically — the second call hits `null` and throws NoSuchElement. Same idempotency trick as ticket-removal in Parking Lot."*
 
 ---
 
@@ -464,11 +464,11 @@ public void cancelReservation(String confirmationId) {
 
 **Problem:** Real users pick seats, then spend 30–60s entering payment. Another user could grab the same seats meanwhile.
 
-**Fix:** A third state — `HELD`. Two-phase flow: `holdSeats` reserves for ~5 min; `confirmHold` upgrades to a Reservation. A sweeper releases stale holds.
+**Fix:** A third state — `HELD`. Two-phase flow: `holdSeats` reserves for ~5 min; `confirmHold` upgrades to a Booking. A sweeper releases stale holds.
 
 ```java
 class Showtime {
-    private final List<Reservation> reservations;
+    private final List<Booking> bookings;
     private final Map<String, SeatHold> holds;       // NEW
 
     public synchronized String holdSeats(List<String> seatIds, Duration timeout) {
@@ -481,7 +481,7 @@ class Showtime {
         return hold.id();
     }
 
-    public synchronized void confirmHold(String holdId, Reservation r) {
+    public synchronized void confirmHold(String holdId, Booking r) {
         SeatHold hold = holds.get(holdId);
         if (hold == null) throw new NoSuchElementException("hold gone");
         if (LocalDateTime.now().isAfter(hold.expiresAt())) {
@@ -489,10 +489,10 @@ class Showtime {
             throw new HoldExpiredException(holdId);
         }
         holds.remove(holdId);
-        reservations.add(r);
+        bookings.add(r);
     }
 
-    // isAvailable now checks both reservations AND non-expired holds.
+    // isAvailable now checks both bookings AND non-expired holds.
 }
 ```
 
@@ -511,8 +511,8 @@ public synchronized void addShowtime(Theater theater, Showtime showtime) {
 public synchronized void removeShowtime(String showtimeId) {
     Showtime s = showtimesById.get(showtimeId);
     if (s == null) throw new NoSuchElementException("not found");
-    if (!s.getReservations().isEmpty()) {
-        throw new IllegalStateException("cancel existing reservations first");
+    if (!s.getBookings().isEmpty()) {
+        throw new IllegalStateException("cancel existing bookings first");
     }
     showtimesById.remove(showtimeId);
     s.getTheater().getShowtimes().remove(s);
@@ -537,7 +537,7 @@ public void book(List<Seat> seats) {
         for (Seat s : sorted) {
             if (s.isBooked()) throw new IllegalStateException(s.id());
         }
-        for (Seat s : sorted) s.markBooked(reservation);
+        for (Seat s : sorted) s.markBooked(booking);
     } finally {
         for (Seat s : sorted) s.unlock();
     }
@@ -555,7 +555,7 @@ public void book(List<Seat> seats) {
 | "Different seat tiers / pricing" | Promote `Seat` to a class with `tier`. Add `PricingStrategy` — `FlatRate`, `TierBased`, `DynamicSurge`. |
 | "Notify user on booking / cancel" | Observer — BookingSystem publishes `BookingConfirmed` / `BookingCancelled`; SMS / Email / Push subscribe. |
 | "Loyalty points / coupons" | Decorator on the pricing pipeline — `LoyaltyDiscount(BasePricing)`, stackable. |
-| "Persist across restart" | Inject `ReservationRepository`; write on every book/cancel; replay on boot. |
+| "Persist across restart" | Inject `BookingRepository`; write on every book/cancel; replay on boot. |
 | "Multi-region" | Facade — `MultiRegionBookingSystem` over `Map<region, BookingSystem>`, routes by region. |
 | "Cleanup expired showtimes" | Background sweeper — drops showtimes whose `datetime` is in the past. |
 | "Variable seat layouts (IMAX 100, intimate 30)" | `ScreenBuilder` OR pass layout dimensions into Showtime; uniform layout was the earlier simplification. |
@@ -569,10 +569,10 @@ public void book(List<Seat> seats) {
 | Pattern / Principle | Where it lives | One-line justification |
 |---------------------|----------------|------------------------|
 | **Facade** | `BookingSystem` | *"Callers only touch BookingSystem — 3 methods hide the theaters, the showtime index, and the concurrency-protected Showtimes."* |
-| **Information Expert** (GRASP) | `Showtime.book` lives on Showtime | *"Only Showtime knows about its reservations, so it owns the atomic mutation."* |
-| **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.reservations` | *"BookingSystem creates a Reservation and TELLS Showtime to store it. It never mutates the list from outside."* |
-| **Single Source of Truth** | `Showtime.reservations` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
-| **Immutability** | `Movie`, `Reservation` | *"Immutable after construction; defensive copies of `seatIds` in both directions."* |
+| **Information Expert** (GRASP) | `Showtime.book` lives on Showtime | *"Only Showtime knows about its bookings, so it owns the atomic mutation."* |
+| **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.bookings` | *"BookingSystem creates a Booking and TELLS Showtime to store it. It never mutates the list from outside."* |
+| **Single Source of Truth** | `Showtime.bookings` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
+| **Immutability** | `Movie`, `Booking` | *"Immutable after construction; defensive copies of `seatIds` in both directions."* |
 | **Immutability** | `LocalDateTime datetime` on Showtime is `final` | *"A showtime's scheduled time doesn't change once created."* |
 
 **No Strategy / Factory / Builder in the base — deliberately.** *"The one-sentence test fails: search is locked to substring, pricing isn't variable, allocation is user-driven. Hardcode it; refactor if Step 5 asks."*
@@ -586,14 +586,14 @@ public void book(List<Seat> seats) {
 | "Notify on booking / cancellation" | **Observer** | *"BookingSystem publishes `BookingConfirmed` / `BookingCancelled`; SMS / Email / Push / Analytics subscribe independently."* |
 | "Loyalty discounts / stackable coupons" | **Decorator** | *"Wrap the pricing pipeline — `LoyaltyDiscount(BasePricing)`, `CouponDiscount(LoyaltyDiscount(BasePricing))` — stackable at runtime."* |
 | "Multiple kinds of theaters (IMAX, drive-in)" | **Factory** | *"`TheaterFactory.create(kind)` returns a preconfigured Theater with the right layout."* |
-| "Persist across restart" | **Repository** | *"Inject `ReservationRepository`; write on every book/cancel; replay on boot to rebuild indexes."* |
+| "Persist across restart" | **Repository** | *"Inject `BookingRepository`; write on every book/cancel; replay on boot to rebuild indexes."* |
 | "Multi-region / multi-country" | **Facade + Composition** | *"`MultiRegionBookingSystem` is a Facade over `Map<region, BookingSystem>` that routes by region."* |
 | "Variable seat layouts (IMAX 100 seats vs intimate 30 seats)" | **Builder** | *"`ScreenBuilder` with `.row('A', 20).row('B', 18)…` — each Screen has its own dimensions."* |
 
 ### Patterns to actively refuse if the interviewer baits you
 
 - **Singleton on BookingSystem** — kills tests; DI a single instance via constructor instead.
-- **State pattern for Reservation** (`PENDING / CONFIRMED / CANCELLED`) — overkill; an enum is fine unless per-state behavior actually diverges.
+- **State pattern for Booking** (`PENDING / CONFIRMED / CANCELLED`) — overkill; an enum is fine unless per-state behavior actually diverges.
 - **Composite over Theater → Showtime → Seat** — not a tree of uniform nodes; each level has a distinct contract.
 - **Builder for the 1-arg `BookingSystem(theaters)` ctor** — academic noise.
 
@@ -610,15 +610,15 @@ public void book(List<Seat> seats) {
 ### Junior (SDE-1)
 - Arrives at 5 entities with a nudge; may promote Seat / Screen to classes without justification.
 - Implements happy-path `book`; misses the `synchronized` keyword until prompted.
-- May maintain both `reservations` list AND a `bookedSeats` set (two sources of truth).
+- May maintain both `bookings` list AND a `bookedSeats` set (two sources of truth).
 - No dry-run of the race condition unless explicitly asked.
 
 ### Mid-level (SDE-2) — the target
-- Reservations list as the single source of truth — no separate booked-seats set.
+- Bookings list as the single source of truth — no separate booked-seats set.
 - `synchronized` on `Showtime.book` from the start; explains the check-then-act race unprompted.
 - All-or-nothing multi-seat booking implemented correctly.
 - Runs the 2-thread dry-run out loud.
-- Names cancellation as an obvious Step-5 extension and can sketch what changes when it lands (Reservation back-ref, `reservationsById` index, order-matters in `book`).
+- Names cancellation as an obvious Step-5 extension and can sketch what changes when it lands (Booking back-ref, `bookingsById` index, order-matters in `book`).
 
 ### Senior (SDE-3 / SDE-II)
 - Everything mid-level, faster, plus proactive tradeoffs.
@@ -634,7 +634,7 @@ public void book(List<Seat> seats) {
 
 ### Complexity
 
-Let `S` = total showtimes, `M` = movies, `R` = reservations on one showtime, `K` = seats per booking.
+Let `S` = total showtimes, `M` = movies, `R` = bookings on one showtime, `K` = seats per booking.
 
 | Operation | Time | Notes |
 |-----------|------|-------|
@@ -642,7 +642,7 @@ Let `S` = total showtimes, `M` = movies, `R` = reservations on one showtime, `K`
 | `searchMovies(title)` | **O(S)** | Scan all showtimes, filter by title + future |
 | `getShowtimesAtTheater` | **O(showtimes at that theater)** | Single pass |
 | `book(showtimeId, K seats)` | **O(K · R)** | `isAvailable` is O(R) per seat |
-| `cancelReservation(id)` *(Step-5)* | **O(1)** hash lookup + **O(R)** list remove | Back-ref on Reservation makes lookup O(1) |
+| `cancelBooking(id)` *(Step-5)* | **O(1)** hash lookup + **O(R)** list remove | Back-ref on Booking makes lookup O(1) |
 
 > **Senior callout:** *"`book` is O(K·R). To make it O(K), maintain a derived `Set<String> bookedSeats` on Showtime — O(1) availability at the cost of one more mutable field to keep in sync. Worth it if R grows to thousands, not before."*
 
@@ -685,7 +685,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 
 ## 30-second summary (memorize for closing)
 
-> *"Five classes: BookingSystem, Theater, Showtime, Reservation, Movie. Seat and Screen are strings — no state, no rules. BookingSystem is the facade — owns theaters plus one index, `showtimesById`, for O(1) booking. Search just scans showtimes and filters by title — fine at interview scale. The core architectural call is that `Showtime.reservations` is the SINGLE source of truth for seat state — availability is derived, no separate booked-set to keep in sync. `Showtime.book` is synchronized, so check-then-add is atomic — that's how exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Reservation plus a `reservationsById` index; seat holds under the same per-showtime lock; per-seat locking with sorted acquisition for opening-night-of-Marvel scale."*
+> *"Five classes: BookingSystem, Theater, Showtime, Booking, Movie. Seat and Screen are strings — no state, no rules. BookingSystem is the facade — owns theaters plus one index, `showtimesById`, for O(1) booking. Search just scans showtimes and filters by title — fine at interview scale. The core architectural call is that `Showtime.bookings` is the SINGLE source of truth for seat state — availability is derived, no separate booked-set to keep in sync. `Showtime.book` is synchronized, so check-then-add is atomic — that's how exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Booking plus a `bookingsById` index; seat holds under the same per-showtime lock; per-seat locking with sorted acquisition for opening-night-of-Marvel scale."*
 
 ---
 
@@ -693,10 +693,10 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 
 - **Forgetting `synchronized` on `book`** — silent double-booking. The single biggest interview-flunk in this problem.
 - **Putting `synchronized` on BookingSystem instead of Showtime** — blocks all bookings system-wide. Granularity should be per-Showtime.
-- **Maintaining a separate `bookedSeats: Set<String>` alongside `reservations`** — two sources of truth → consistency bugs.
-- **When cancellation is added: no back-reference on Reservation** — cancel walks every theater × every showtime × every reservation.
-- **When cancellation is added: `reservationsById.put` BEFORE `showtime.book` succeeds** — orphan entries from every rejected booking.
-- **A `cancel()` method on Reservation** — Reservation would mutate Showtime state from outside. Cancellation lives on Showtime.
+- **Maintaining a separate `bookedSeats: Set<String>` alongside `bookings`** — two sources of truth → consistency bugs.
+- **When cancellation is added: no back-reference on Booking** — cancel walks every theater × every showtime × every booking.
+- **When cancellation is added: `bookingsById.put` BEFORE `showtime.book` succeeds** — orphan entries from every rejected booking.
+- **A `cancel()` method on Booking** — Booking would mutate Showtime state from outside. Cancellation lives on Showtime.
 - **Per-seat locking without sorted acquisition** — deadlocks.
 - **Promoting Seat to a class without justification** — burns time; if you do it, name the reason (tiers, per-seat locks).
 
@@ -708,8 +708,8 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 |------|---------|
 | `model/Movie.java` | Immutable — id + title |
 | `model/Theater.java` | Named location; owns `List<Showtime>`; two-phase setup |
-| `model/Showtime.java` | **The hot class** — synchronized `book`; reservations = single source of truth |
-| `model/Reservation.java` | Immutable — confirmationId + seatIds |
+| `model/Showtime.java` | **The hot class** — synchronized `book`; bookings = single source of truth |
+| `model/Booking.java` | Immutable — bookingId + seatIds |
 | `BookingSystem.java` | Facade — one `showtimesById` index, 3 public methods |
 | `BookingSystemDriver.java` | Scenarios including a real 50-thread race |
 

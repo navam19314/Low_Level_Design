@@ -1,7 +1,7 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Movie;
-import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Reservation;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Booking;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
@@ -41,8 +41,8 @@ public class BookingSystemDriver {
         }
 
         System.out.println("\n--- Happy-path booking ---");
-        Reservation r1 = system.book("S1", List.of("A5", "A6"));
-        System.out.println("Confirmation: " + r1.getConfirmationId());
+        Booking b1 = system.book("S1", List.of("A5", "A6"));
+        System.out.println("Booking id: " + b1.getBookingId());
 
         System.out.println("\n--- Same seats again → IllegalStateException ---");
         try { system.book("S1", List.of("A5")); }
@@ -52,7 +52,7 @@ public class BookingSystemDriver {
         try { system.book("S1", List.of("A7", "A6", "A8")); }
         catch (IllegalStateException e) {
             System.out.println("Rejected: " + e.getMessage());
-            System.out.println("A7 still available? " + system.book("S1", List.of("A7")).getConfirmationId().substring(0, 8) + "...");
+            System.out.println("A7 still available? " + system.book("S1", List.of("A7")).getBookingId().substring(0, 8) + "...");
         }
 
         System.out.println("\n--- Invalid seat id ---");
