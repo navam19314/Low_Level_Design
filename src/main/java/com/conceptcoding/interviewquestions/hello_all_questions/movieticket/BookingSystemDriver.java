@@ -58,19 +58,12 @@ public class BookingSystemDriver {
             System.out.println("A7 still available? " + system.book("S1", List.of("A7")).getConfirmationId().substring(0, 8) + "...");
         }
 
-        System.out.println("\n--- Cancel r1 and rebook A5 ---");
-        system.cancelReservation(r1.getConfirmationId());
-        Reservation r3 = system.book("S1", List.of("A5"));
-        System.out.println("Re-booked A5 with confirmation: " + r3.getConfirmationId().substring(0, 8) + "...");
-
         System.out.println("\n--- Invalid seat id ---");
         try { system.book("S1", List.of("ZZZ-bad")); }
         catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
 
-        System.out.println("\n--- Unknown showtime / confirmation ---");
+        System.out.println("\n--- Unknown showtime ---");
         try { system.book("nope", List.of("B1")); }
-        catch (NoSuchElementException e) { System.out.println("Rejected: " + e.getMessage()); }
-        try { system.cancelReservation("00000000-0000-0000-0000-000000000000"); }
         catch (NoSuchElementException e) { System.out.println("Rejected: " + e.getMessage()); }
 
         System.out.println("\n--- Concurrent booking on S2: 50 threads race for seat 'C10' ---");

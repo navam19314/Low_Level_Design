@@ -3,26 +3,19 @@ package com.conceptcoding.interviewquestions.hello_all_questions.movieticket.mod
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * User's booking reference. Immutable data record with a back-reference to its
- * Showtime so cancellation can route to the right place without scanning.
- *
- * <p>Notice there's no cancel() method here — cancellation modifies the Showtime's
- * reservations list, so it lives on Showtime where the state lives (Tell, Don't Ask).
- */
+// User's booking reference. Immutable — just the confirmation id and the seats.
+// (Cancellation is a Step-5 extension; when added, this grows a back-ref to its
+//  Showtime so cancel-by-confirmation-id routes without scanning.)
 public class Reservation {
 
     private final String confirmationId;
-    private final Showtime showtime;
     private final List<String> seatIds;
 
-    public Reservation(String confirmationId, Showtime showtime, List<String> seatIds) {
+    public Reservation(String confirmationId, List<String> seatIds) {
         this.confirmationId = confirmationId;
-        this.showtime = showtime;
         this.seatIds = new ArrayList<>(seatIds);   // defensive copy in
     }
 
     public String       getConfirmationId() { return confirmationId; }
-    public Showtime     getShowtime()       { return showtime; }
     public List<String> getSeatIds()        { return new ArrayList<>(seatIds); }  // defensive copy out
 }

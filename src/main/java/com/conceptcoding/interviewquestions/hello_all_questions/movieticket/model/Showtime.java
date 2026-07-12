@@ -97,11 +97,6 @@ public class Showtime {
         reservations.add(reservation);
     }
 
-    // Removing the reservation frees its seats automatically.
-    public synchronized void cancel(Reservation reservation) {
-        reservations.remove(reservation);
-    }
-
     private static boolean isValidSeatId(String seatId) {
         if (seatId == null || seatId.length() < 2) return false;
         char row = seatId.charAt(0);
