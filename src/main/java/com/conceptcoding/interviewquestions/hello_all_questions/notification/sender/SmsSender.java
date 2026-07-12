@@ -13,8 +13,8 @@ public class SmsSender implements NotificationSender {
 
     @Override
     public void send(Notification notification) {
-        String body = notification.body();
+        String body = notification.getBody();
         String truncated = body.length() <= SMS_MAX_LEN ? body : body.substring(0, SMS_MAX_LEN) + "…";
-        System.out.printf("  [sms]    → %s : %s%n", notification.recipientId(), truncated);
+        System.out.printf("  [sms]    → %s : %s%n", notification.getRecipientId(), truncated);
     }
 }

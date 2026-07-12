@@ -12,6 +12,6 @@ public class EmailSender implements NotificationSender {
     @Override
     public void send(Notification notification) {
         System.out.printf("  [email]  → %s : %s%n",
-                notification.recipientId(), notification.subject());
+                notification.getRecipientId(), notification.getSubject());
     }
 }

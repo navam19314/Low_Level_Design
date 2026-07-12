@@ -1,30 +1,27 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.notification.model;
 
-import java.time.Instant;
-import java.util.Map;
-import java.util.Objects;
+// Immutable payload sent across all channels. Channel-specific rendering
+// (HTML vs plain text vs short SMS) is each Sender's job, not the Notification's —
+// that's how one payload reaches every channel without N×M renderer classes.
+public class Notification {
 
-/**
- * Immutable notification record — the payload sent across all channels.
- *
- * <p>Channel-specific rendering (HTML vs plain text vs short SMS) is the job of
- * each Sender, not the Notification — that's how the same content reaches every
- * channel without N×M renderer classes.
- */
-public record Notification(
-        String id,
-        String recipientId,
-        String subject,
-        String body,
-        Map<String, String> metadata,
-        Instant createdAt) {
+    private final String id;
+    private final String recipientId;
+    private final String subject;
+    private final String body;
 
-    public Notification {
-        Objects.requireNonNull(id,          "id required");
-        Objects.requireNonNull(recipientId, "recipientId required");
-        Objects.requireNonNull(subject,     "subject required");
-        Objects.requireNonNull(body,        "body required");
-        // Defensive immutable copy — callers can't mutate our metadata after construction.
-        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+    public Notification(String id, String recipientId, String subject, String body) {
+        if (id == null || recipientId == null || subject == null || body == null) {
+            throw new IllegalArgumentException("id, recipientId, subject, body are required");
+        }
+        this.id          = id;
+        this.recipientId = recipientId;
+        this.subject     = subject;
+        this.body        = body;
     }
+
+    public String getId()          { return id; }
+    public String getRecipientId() { return recipientId; }
+    public String getSubject()     { return subject; }
+    public String getBody()        { return body; }
 }

@@ -2,19 +2,12 @@ package com.conceptcoding.interviewquestions.hello_all_questions.notification.li
 
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.model.DeliveryResult;
 
-/**
- * Observer interface — invoked after EACH delivery attempt (one per channel).
- * Listeners observe outcomes; they don't influence delivery.
- *
- * <p>Implementations MUST be safe to call from any thread (service publishes
- * outside its own locks). A listener that throws MUST NOT take down the other
- * listeners or the calling thread — the service catches around each invocation.
- */
+// Observer interface — invoked after EACH delivery attempt (one per channel).
+// Listeners observe outcomes; they don't influence delivery. A throwing listener
+// can't take down the others — the service catches around each invocation.
 public interface NotificationListener {
 
-    /** Called when a delivery attempt succeeded on a specific channel. */
-    void onDelivered(DeliveryResult result);
+    void onDelivered(DeliveryResult result);   // delivery succeeded on a channel
 
-    /** Called when a delivery attempt failed on a specific channel. */
-    void onFailed(DeliveryResult result);
+    void onFailed(DeliveryResult result);      // delivery failed on a channel
 }

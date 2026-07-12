@@ -12,6 +12,6 @@ public class PushSender implements NotificationSender {
     @Override
     public void send(Notification notification) {
         System.out.printf("  [push]   → %s : %s%n",
-                notification.recipientId(), notification.subject());
+                notification.getRecipientId(), notification.getSubject());
     }
 }

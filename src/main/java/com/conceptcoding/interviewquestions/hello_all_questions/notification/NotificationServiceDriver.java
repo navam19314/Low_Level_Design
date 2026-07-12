@@ -9,11 +9,8 @@ import com.conceptcoding.interviewquestions.hello_all_questions.notification.sen
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.sender.PushSender;
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.sender.SmsSender;
 
-import java.time.Clock;
-import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -39,7 +36,7 @@ public class NotificationServiceDriver {
         List<DeliveryResult> results = svc.send(n);
         System.out.println("  results.size() = " + results.size() + " (expect 3)");
         for (DeliveryResult r : results) {
-            System.out.println("    " + r.channel() + " : " + r.status());
+            System.out.println("    " + r.getChannel() + " : " + r.getStatus());
         }
         System.out.println();
     }
@@ -53,7 +50,7 @@ public class NotificationServiceDriver {
         List<DeliveryResult> results = svc.send(n);
         System.out.println("  results.size() = " + results.size() + " (expect 2)");
         for (DeliveryResult r : results) {
-            System.out.println("    " + r.channel() + " : " + r.status());
+            System.out.println("    " + r.getChannel() + " : " + r.getStatus());
         }
         System.out.println();
     }
@@ -72,8 +69,8 @@ public class NotificationServiceDriver {
         Notification n = note("user-C", "Alert", "Suspicious login");
         List<DeliveryResult> results = svc.send(n);
         for (DeliveryResult r : results) {
-            System.out.println("  " + r.channel() + " : " + r.status()
-                    + (r.errorMessage() == null ? "" : " (" + r.errorMessage() + ")"));
+            System.out.println("  " + r.getChannel() + " : " + r.getStatus()
+                    + (r.getErrorMessage() == null ? "" : " (" + r.getErrorMessage() + ")"));
         }
         long failures = results.stream().filter(r -> !r.isSent()).count();
         long successes = results.stream().filter(DeliveryResult::isSent).count();
@@ -145,14 +142,11 @@ public class NotificationServiceDriver {
 
     private static NotificationService newService() {
         return new NotificationService(
-                List.of(new EmailSender(), new SmsSender(), new PushSender()),
-                Clock.fixed(Instant.parse("2026-06-01T10:00:00Z"),
-                        java.time.ZoneId.of("UTC")));
+                List.of(new EmailSender(), new SmsSender(), new PushSender()));
     }
 
     private static Notification note(String recipient, String subject, String body) {
-        return new Notification(UUID.randomUUID().toString(), recipient, subject, body,
-                Map.of(), Instant.parse("2026-06-01T10:00:00Z"));
+        return new Notification(UUID.randomUUID().toString(), recipient, subject, body);
     }
 
     /** Listener that counts delivered + failed invocations across all channels and threads. */
