@@ -1,6 +1,5 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.notification;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.notification.listener.NotificationListener;
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.model.DeliveryResult;
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.model.Notification;
 import com.conceptcoding.interviewquestions.hello_all_questions.notification.model.NotificationChannel;
@@ -12,20 +11,13 @@ import com.conceptcoding.interviewquestions.hello_all_questions.notification.sen
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class NotificationServiceDriver {
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         scenarioFanOutToAllChannels();
         scenarioRespectsUserPreferences();
         scenarioSenderFailureIsolation();
-        scenarioListenerFailureIsolation();
-        scenarioConcurrentBurst();
     }
 
     // ---- 1. Fan-out to all configured channels ----
@@ -79,64 +71,8 @@ public class NotificationServiceDriver {
         System.out.println();
     }
 
-    // ---- 4. Listener failure isolation — throwing listener doesn't break others ----
-    private static void scenarioListenerFailureIsolation() {
-        System.out.println("=== Scenario 4: one of two listeners throws — the other still fires ===");
-        NotificationService svc = newService();
-        CountingListener good = new CountingListener();
-        NotificationListener bad = new NotificationListener() {
-            @Override public void onDelivered(DeliveryResult r) { throw new RuntimeException("listener bug"); }
-            @Override public void onFailed(DeliveryResult r)    { throw new RuntimeException("listener bug"); }
-        };
-        svc.addListener(bad);
-        svc.addListener(good);
-        Notification n = note("user-D", "Beep", "boop");
-        svc.send(n);
-        System.out.println("  good listener.delivered count: " + good.delivered.get()
-                + " (expect 3 — fired once per channel despite bad listener throwing)");
-        System.out.println();
-    }
-
-    // ---- 5. Concurrent burst — 50 notifications × 3 channels = 150 delivery results ----
-    private static void scenarioConcurrentBurst() throws Exception {
-        System.out.println("=== Scenario 5: 50 threads, 1 notification each, 3 channels — atomicity ===");
-        NotificationService svc = newService();
-        CountingListener listener = new CountingListener();
-        svc.addListener(listener);
-
-        int threads = 50;
-        ExecutorService pool = Executors.newFixedThreadPool(threads);
-        CountDownLatch ready = new CountDownLatch(threads);
-        CountDownLatch fire = new CountDownLatch(1);
-        AtomicInteger totalResults = new AtomicInteger();
-
-        for (int i = 0; i < threads; i++) {
-            final int n = i;
-            pool.submit(() -> {
-                ready.countDown();
-                try {
-                    fire.await();
-                    Notification msg = note("user-X-" + n, "burst", "msg " + n);
-                    List<DeliveryResult> results = svc.send(msg);
-                    totalResults.addAndGet(results.size());
-                } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            });
-        }
-        ready.await();
-        fire.countDown();
-        pool.shutdown();
-        pool.awaitTermination(5, TimeUnit.SECONDS);
-
-        int expectedDeliveries = threads * 3;     // 3 channels per notification
-        System.out.println("  total DeliveryResults returned: " + totalResults.get()
-                + " (expect " + expectedDeliveries + ")");
-        System.out.println("  listener.delivered count:        " + listener.delivered.get()
-                + " (expect " + expectedDeliveries + ")");
-        System.out.println(totalResults.get() == expectedDeliveries
-                && listener.delivered.get() == expectedDeliveries
-                ? "  ✓ no lost results or listener invocations under contention"
-                : "  ✗ RACE — count mismatch");
-    }
+    // Concurrent burst (50 threads, ConcurrentHashMap swap) is a Step-5 extension —
+    // only write it if the interviewer asks about thread-safety. See INTERVIEW_WALKTHROUGH.md.
 
     // ---- helpers ----
 
@@ -147,14 +83,5 @@ public class NotificationServiceDriver {
 
     private static Notification note(String recipient, String subject, String body) {
         return new Notification(UUID.randomUUID().toString(), recipient, subject, body);
-    }
-
-    /** Listener that counts delivered + failed invocations across all channels and threads. */
-    static class CountingListener implements NotificationListener {
-        final AtomicInteger delivered = new AtomicInteger();
-        final AtomicInteger failed    = new AtomicInteger();
-
-        @Override public void onDelivered(DeliveryResult r) { delivered.incrementAndGet(); }
-        @Override public void onFailed(DeliveryResult r)    { failed.incrementAndGet(); }
     }
 }
