@@ -16,11 +16,9 @@ import java.util.Set;
 // locking — but only when the simple approach is a MEASURED bottleneck.
 public class Showtime {
 
-    // Fixed seat layout — rows A..Z, seats 0..20 → 546 seats per showtime.
-    private static final char MIN_ROW  = 'A';
-    private static final char MAX_ROW  = 'Z';
-    private static final int  MIN_SEAT = 0;
-    private static final int  MAX_SEAT = 20;
+    // Fixed seat layout — flat numbered seats "1".."100". No row/column math needed;
+    // a real system would vary this per-Screen (Step 5).
+    private static final int TOTAL_SEATS = 100;
 
     private final String id;
     private final Screen screen;
@@ -66,11 +64,9 @@ public class Showtime {
             booked.addAll(b.getSeatIds());
         }
         List<String> available = new ArrayList<>();
-        for (char row = MIN_ROW; row <= MAX_ROW; row++) {
-            for (int num = MIN_SEAT; num <= MAX_SEAT; num++) {
-                String seatId = "" + row + num;
-                if (!booked.contains(seatId)) available.add(seatId);
-            }
+        for (int num = 1; num <= TOTAL_SEATS; num++) {
+            String seatId = String.valueOf(num);
+            if (!booked.contains(seatId)) available.add(seatId);
         }
         return available;
     }
@@ -100,12 +96,9 @@ public class Showtime {
     }
 
     private static boolean isValidSeatId(String seatId) {
-        if (seatId == null || seatId.length() < 2) return false;
-        char row = seatId.charAt(0);
-        if (row < MIN_ROW || row > MAX_ROW) return false;
         try {
-            int num = Integer.parseInt(seatId.substring(1));
-            return num >= MIN_SEAT && num <= MAX_SEAT;
+            int num = Integer.parseInt(seatId);
+            return num >= 1 && num <= TOTAL_SEATS;
         } catch (NumberFormatException e) {
             return false;
         }

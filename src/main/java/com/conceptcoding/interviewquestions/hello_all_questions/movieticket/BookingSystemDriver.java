@@ -52,30 +52,30 @@ public class BookingSystemDriver {
         }
 
         System.out.println("\n--- Happy-path booking ---");
-        Booking b1 = system.book("S1", List.of("A5", "A6"));
+        Booking b1 = system.book("S1", List.of("5", "6"));
         System.out.println("Booking id: " + b1.getBookingId());
 
         System.out.println("\n--- Same seats again → IllegalStateException ---");
-        try { system.book("S1", List.of("A5")); }
+        try { system.book("S1", List.of("5")); }
         catch (IllegalStateException e) { System.out.println("Rejected: " + e.getMessage()); }
 
-        System.out.println("\n--- Partial booking is atomic: A6 taken → whole booking fails ---");
-        try { system.book("S1", List.of("A7", "A6", "A8")); }
+        System.out.println("\n--- Partial booking is atomic: seat 6 taken → whole booking fails ---");
+        try { system.book("S1", List.of("7", "6", "8")); }
         catch (IllegalStateException e) {
             System.out.println("Rejected: " + e.getMessage());
-            System.out.println("A7 still available? " + system.book("S1", List.of("A7")).getBookingId().substring(0, 8) + "...");
+            System.out.println("Seat 7 still available? " + system.book("S1", List.of("7")).getBookingId().substring(0, 8) + "...");
         }
 
         System.out.println("\n--- Invalid seat id ---");
-        try { system.book("S1", List.of("ZZZ-bad")); }
+        try { system.book("S1", List.of("not-a-seat")); }
         catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
 
         System.out.println("\n--- Unknown showtime ---");
-        try { system.book("nope", List.of("B1")); }
+        try { system.book("nope", List.of("1")); }
         catch (NoSuchElementException e) { System.out.println("Rejected: " + e.getMessage()); }
 
-        System.out.println("\n--- Concurrent booking on S2: 50 threads race for seat 'C10' ---");
-        concurrentRace(system, "S2", "C10", /* threadCount */ 50);
+        System.out.println("\n--- Concurrent booking on S2: 50 threads race for seat '10' ---");
+        concurrentRace(system, "S2", "10", /* threadCount */ 50);
     }
 
     private static void concurrentRace(BookingSystem system, String showtimeId,

@@ -62,11 +62,11 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
               Availability is DERIVED, not stored.
 
                     +--------------------------+
-                    |    Showtime.bookings |
+                    |   Showtime.bookings      |
                     +--------------------------+
-                    | [ Booking { A5,A6 } ]|
-                    | [ Booking { B1    } ]|
-                    | [ Booking { C10   } ]|
+                    | [ Booking { 5, 6 } ]     |
+                    | [ Booking { 20   } ]     |
+                    | [ Booking { 10   } ]     |
                     +--------------------------+
 ```
 
@@ -75,12 +75,12 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 ### M3. The check-then-act race + the fix (THE core signal for this problem)
 
 ```
-   WITHOUT synchronization — two threads booking seat A5:
+   WITHOUT synchronization — two threads booking seat 5:
 
    t=0   Thread A                Thread B
    ────  ──────────              ──────────
-   t=1   isAvailable(A5) → true
-   t=2                           isAvailable(A5) → true   ← BOTH see it free
+   t=1   isAvailable(5) → true
+   t=2                           isAvailable(5) → true   ← BOTH see it free
    t=3   bookings.add(rA)
    t=4                           bookings.add(rB)     ← DOUBLE-BOOKED!
 
@@ -93,7 +93,7 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
    t=2   isAvailable → true
    t=3   add(rA)
    t=4   exits lock              enters lock
-   t=5                           isAvailable(A5) → FALSE  ← sees A's mutation
+   t=5                           isAvailable(5) → FALSE  ← sees A's mutation
    t=6                           throws IllegalStateException  ✓
 ```
 
@@ -130,7 +130,7 @@ IN SCOPE (all 3 test something the interviewer is grading)
 3. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
 
 ASSUMED (not requirements — simplifications we agreed on)
-- Uniform seat layout (rows A-Z, seats 0-20) — no per-screen sizes.
+- Uniform seat layout — flat numbered seats "1".."100" — no per-screen sizes.
 - All seats identical — no tiers.
 - Payment assumed successful.
 
@@ -417,10 +417,10 @@ public boolean titleContains(String query) {
 ### 4.4 Dry-run — the 2-thread race (say this at the board)
 
 ```
-Setup: showtime "S1" for Inception at 7pm, all 546 seats free.
+Setup: showtime "S1" for Inception at 7pm, all 100 seats free.
 
-Thread A: bookingSystem.book("S1", ["A5"])
-Thread B: bookingSystem.book("S1", ["A5"])     ← same seat!
+Thread A: bookingSystem.book("S1", ["5"])
+Thread B: bookingSystem.book("S1", ["5"])     ← same seat!
 
 Step 1: Both threads create Booking objects (different confirmation ids).
         No state change yet — just object construction.
@@ -428,13 +428,13 @@ Step 1: Both threads create Booking objects (different confirmation ids).
 Step 2: Both call showtime.book(booking). Java's monitor lets ONE inside.
 
    Thread A wins the lock:
-      isAvailable("A5") → true    (bookings empty)
+      isAvailable("5") → true    (bookings empty)
       bookings.add(bookingA)
       exit lock
 
    Thread B blocked; now acquires the lock:
-      isAvailable("A5") → scans bookings, finds A5 → FALSE
-      throw IllegalStateException("A5")
+      isAvailable("5") → scans bookings, finds 5 → FALSE
+      throw IllegalStateException("5")
       exit lock with NO state change                                    ✓
 
 Step 3: Back in BookingSystem.book:
@@ -591,7 +591,7 @@ public void book(List<Seat> seats) {
 }
 ```
 
-**Say aloud:** *"Sorted lock acquisition is the deadlock fix — Thread A grabbing `[A5, B5]` and Thread B grabbing `[B5, A5]` would otherwise deadlock. Same pattern generalizes to bank transfers between two accounts."*
+**Say aloud:** *"Sorted lock acquisition is the deadlock fix — Thread A grabbing `["5", "6"]` and Thread B grabbing `["6", "5"]` would otherwise deadlock. Same pattern generalizes to bank transfers between two accounts."*
 
 **Tradeoff to name:** *"More state (one lock per seat), more careful coding. Real benefit only at extreme contention. Profile before switching."*
 
@@ -715,7 +715,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
         pool.submit(() -> {
             try {
                 fire.await();
-                bookingSystem.book("S1", List.of("C10"));
+                bookingSystem.book("S1", List.of("10"));
                 successes.incrementAndGet();
             } catch (IllegalStateException ignored) {}
         });
