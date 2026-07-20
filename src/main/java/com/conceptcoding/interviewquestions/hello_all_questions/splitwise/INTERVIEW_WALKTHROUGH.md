@@ -1,7 +1,7 @@
 # Splitwise — 45-min LLD Interview Walkthrough
 
 **Frequency:** Top-5 at Amazon India SDE-2, Top-3 at Adobe Noida. Rare at Microsoft (they prefer Vending Machine / Logger).
-**Senior signal:** Three things separate mid from senior here — `long` cents, balance-graph normalization, and greedy debt simplification. Nail all three.
+**Senior signal:** Three things separate mid from senior here — `long` rupees (never floats), balance-graph normalization, and greedy debt simplification. Nail all three.
 
 ---
 
@@ -25,9 +25,9 @@
 ### M1. What `addExpense` actually does (3-line summary)
 
 ```
-1. Strategy.calculate(total, participants) → List<Split>   // each split = (userId, amountCents)
+1. Strategy.calculate(total, participants) → List<Split>   // each split = (userId, amount)
 2. For every split where userId != payer:
-       addOwed(payer, userId, split.amountCents)           // payer is creditor, user is debtor
+       addOwed(payer, userId, split.amount)                // payer is creditor, user is debtor
 3. Append Expense to ledger.
 ```
 
@@ -37,7 +37,7 @@ That's it. Strategy handles the math. `addOwed` handles the graph. Ledger record
 
 ---
 
-### M2. Money = `long` cents. Always. No exceptions.
+### M2. Money = `long` rupees. Always. No exceptions.
 
 **The rule:** Never use `double` or `float` for money.
 
@@ -45,24 +45,24 @@ That's it. Strategy handles the math. `addOwed` handles the graph. Ledger record
 
 **The fix — 3 rules:**
 ```
-1. Store everything as long cents  (₹10.00 → 1000L)
+1. Store everything as long rupees, whole units — no decimals, no doubles
 2. PERCENT split → use basis points (33.33% → 3333,  sum must == 10000)
 3. Rounding remainder → last participant absorbs it
 
-   Example: 1000 cents split equally among 3
-   share     = 1000 / 3 = 333    (integer division)
-   remainder = 1000 − 333×3 = 1
-   → first 2 get 333, last gets 334.   Sum = 1000. ✓ Exact.
+   Example: ₹100 split equally among 3
+   share     = 100 / 3 = 33    (integer division)
+   remainder = 100 − 33×3 = 1
+   → first 2 get ₹33, last gets ₹34.   Sum = ₹100. ✓ Exact.
 ```
 
-> **Say in interview:** *"Money is `long` cents — never doubles. PERCENT uses basis points so 33.33% is `3333` with no float drift. The rounding remainder goes on the last participant so the sum is always exactly the total — no penny vanishes."*
+> **Say in interview:** *"Money is `long` rupees — never doubles. PERCENT uses basis points so 33.33% is `3333` with no float drift. The rounding remainder goes on the last participant so the sum is always exactly the total — no rupee vanishes."*
 
 ---
 
 ### M3. Balance graph — one invariant, one rule
 
 **The graph:** `Map<String, Map<String, Long>> balances`
-- `balances[A][B] = 1000` means B owes A ₹10.
+- `balances[A][B] = 100` means B owes A ₹100.
 
 **The invariant:** `balances[A][B] > 0` and `balances[B][A] > 0` can NEVER both be true at the same time.
 
@@ -106,11 +106,11 @@ Step 3 — Greedy match:
 **Two dry-runs to know cold:**
 
 ```
-Chain:  B pays for A ($10), C pays for B ($10), D pays for C ($10)
-   net[A]=-1000, net[B]=0(skip), net[C]=0(skip), net[D]=+1000
-   → 1 settlement: A pays D $10.    (vs 3 naïve settlements)
+Chain:  B pays for A (₹100), C pays for B (₹100), D pays for C (₹100)
+   net[A]=-100, net[B]=0(skip), net[C]=0(skip), net[D]=+100
+   → 1 settlement: A pays D ₹100.    (vs 3 naïve settlements)
 
-Circular: A→B $10, B→C $10, C→A $10
+Circular: A→B ₹100, B→C ₹100, C→A ₹100
    net[A]=0, net[B]=0, net[C]=0
    → 0 settlements. Circular debt auto-cancels.
 ```
@@ -156,7 +156,7 @@ IN SCOPE
 3. EQUAL: share = total/N, last absorbs remainder
    EXACT: per-user amounts, must sum to total
    PERCENT: basis points (10000 = 100%), must sum to 10000
-4. Pairwise balance query: getBalance(u1, u2) → signed long cents
+4. Pairwise balance query: getBalance(u1, u2) → signed long rupees
 5. Net balance per user: getNetBalance(userId)
 6. simplifyDebts() → minimal list of (debtor, creditor, amount) settlements
 7. Thread-safe under concurrent addExpense calls
@@ -169,7 +169,7 @@ OUT OF SCOPE
 - UI / rendering
 ```
 
-> **Close with:** *"Three load-bearing requirements: integer-cent money, basis-point percentages, and greedy simplification. That's where the senior signal lives."*
+> **Close with:** *"Three load-bearing requirements: integer-rupee money, basis-point percentages, and greedy simplification. That's where the senior signal lives."*
 
 ---
 
@@ -195,14 +195,14 @@ OUT OF SCOPE
 | `ExpenseManager` | Orchestrator + facade. The only class callers touch. |
 | `User` | Immutable value object: id, name, email |
 | `Expense` | Immutable ledger entry: id, paidById, total, splits, createdAt |
-| `Split` | (userId, amountCents) — output of Strategy |
-| `Settlement` | (debtorId, creditorId, amountCents) — output of simplifyDebts |
+| `Split` | (userId, amount) — output of Strategy |
+| `Settlement` | (debtorId, creditorId, amount) — output of simplifyDebts |
 | `SplitStrategy` | Interface. 3 impls: Equal / Exact / Percent |
 
 **Not entities (say why):**
 - `Group` — no group-level invariants in requirements. Participants list is enough.
 - `BalanceSheet` — just a Map of Maps. No behavior beyond what `addOwed` already enforces.
-- `Money` — `long` cents + single currency is sufficient for v1.
+- `Money` — `long` rupees + single currency is sufficient for v1.
 
 ---
 
@@ -234,7 +234,7 @@ public class ExpenseManager {
     );
 
     public synchronized void             addUser(User user);
-    public synchronized Expense          addExpense(String paidById, long totalCents,
+    public synchronized Expense          addExpense(String paidById, long totalAmount,
                                                     SplitType type,
                                                     Map<String, Long> inputs,
                                                     String description);
@@ -267,11 +267,11 @@ private void setStored(String creditor, String debtor, long amount) {
 
 ```java
 public interface SplitStrategy {
-    List<Split> calculate(long totalAmountCents, Map<String, Long> participantInputs);
+    List<Split> calculate(long totalAmount, Map<String, Long> participantInputs);
 }
 // EqualSplitStrategy  — keys only; floor division + remainder on last
-// ExactSplitStrategy  — values are cents; validate sum == total
-// PercentSplitStrategy — values are bps; validate sum == 10000; last absorbs cent-remainder
+// ExactSplitStrategy  — values are rupees; validate sum == total
+// PercentSplitStrategy — values are bps; validate sum == 10000; last absorbs the remainder
 ```
 
 > **Say in interview:** *"Strategy passes the one-sentence test: I need 3 implementations on day 1. The validation rules differ per type — EXACT validates sum, PERCENT validates bps. Each impl owns its own rules. ExpenseManager doesn't grow when a new split type is added."*
@@ -291,7 +291,7 @@ public interface SplitStrategy {
 ### `addExpense` — write this and narrate
 
 ```java
-public synchronized Expense addExpense(String paidById, long totalCents,
+public synchronized Expense addExpense(String paidById, long totalAmount,
                                        SplitType type, Map<String, Long> inputs,
                                        String description) {
     if (!users.containsKey(paidById))
@@ -300,15 +300,15 @@ public synchronized Expense addExpense(String paidById, long totalCents,
         if (!users.containsKey(uid))
             throw new IllegalArgumentException("Unknown participant: " + uid);
 
-    List<Split> splits = strategies.get(type).calculate(totalCents, inputs); // may throw
+    List<Split> splits = strategies.get(type).calculate(totalAmount, inputs); // may throw
 
     Expense expense = new Expense(UUID.randomUUID().toString(), paidById,
-                                  totalCents, splits, description, LocalDateTime.now());
+                                  totalAmount, splits, description, LocalDateTime.now());
     expenses.add(expense);
 
     for (Split s : splits)
         if (!s.getUserId().equals(paidById))
-            addOwed(paidById, s.getUserId(), s.getAmountCents());
+            addOwed(paidById, s.getUserId(), s.getAmount());
 
     return expense;
 }
@@ -380,17 +380,17 @@ public synchronized List<Settlement> simplifyDebts() {
 ### Dry-run — say this out loud (chain collapse)
 
 ```
-B pays ₹10 for A  → balances[B][A] = 1000
-C pays ₹10 for B  → balances[C][B] = 1000
-D pays ₹10 for C  → balances[D][C] = 1000
+B pays ₹100 for A  → balances[B][A] = 100
+C pays ₹100 for B  → balances[C][B] = 100
+D pays ₹100 for C  → balances[D][C] = 100
 
-net[A] = 0 − 1000 = -1000  (debtor)
-net[B] = 1000 − 1000 = 0   (skip)
-net[C] = 1000 − 1000 = 0   (skip)
-net[D] = 1000 − 0 = +1000  (creditor)
+net[A] = 0 − 100 = -100  (debtor)
+net[B] = 100 − 100 = 0   (skip)
+net[C] = 100 − 100 = 0   (skip)
+net[D] = 100 − 0 = +100  (creditor)
 
-Greedy: pop D(+1000) and A(-1000), settle 1000.
-Result: 1 settlement — A pays D ₹10.
+Greedy: pop D(+100) and A(-100), settle 100.
+Result: 1 settlement — A pays D ₹100.
 Naïve would have been 3 settlements. Greedy wins.
 ```
 
@@ -408,7 +408,7 @@ Offer these before the interviewer asks. Depth of the answer scales with seniori
 public class ShareSplitStrategy implements SplitStrategy {
     // participantInputs value = number of shares (e.g. {A: 1, B: 2, C: 1})
     @Override
-    public List<Split> calculate(long totalAmountCents, Map<String, Long> participantInputs) {
+    public List<Split> calculate(long totalAmount, Map<String, Long> participantInputs) {
         long totalShares = 0;
         for (long s : participantInputs.values()) totalShares += s;
 
@@ -416,11 +416,11 @@ public class ShareSplitStrategy implements SplitStrategy {
         List<Split> splits = new ArrayList<>();
         long accumulated = 0;
         for (int i = 0; i < users.size() - 1; i++) {
-            long amount = (totalAmountCents * participantInputs.get(users.get(i))) / totalShares;
+            long amount = (totalAmount * participantInputs.get(users.get(i))) / totalShares;
             splits.add(new Split(users.get(i), amount));
             accumulated += amount;
         }
-        splits.add(new Split(users.get(users.size() - 1), totalAmountCents - accumulated));
+        splits.add(new Split(users.get(users.size() - 1), totalAmount - accumulated));
         return splits;
     }
 }
@@ -508,7 +508,7 @@ public ExpenseManager(ExpenseRepository repo) {
         expenses.add(e);
         for (Split s : e.getSplits()) {
             if (!s.getUserId().equals(e.getPaidById())) {
-                addOwed(e.getPaidById(), s.getUserId(), s.getAmountCents());
+                addOwed(e.getPaidById(), s.getUserId(), s.getAmount());
             }
         }
     }
@@ -576,7 +576,7 @@ public synchronized Settlement recordSettlement(String debtorId, String creditor
 }
 ```
 
-**Say aloud:** *"A settlement is just an expense in reverse — `A pays B $30` reduces `A owes B` by $30, exactly like B originally covering an A-share for $30. The addOwed logic already cancels opposing balances correctly, so I just call it with the roles swapped. Zero new algorithm needed."*
+**Say aloud:** *"A settlement is just an expense in reverse — `A pays B ₹300` reduces `A owes B` by ₹300, exactly like B originally covering an A-share for ₹300. The addOwed logic already cancels opposing balances correctly, so I just call it with the roles swapped. Zero new algorithm needed."*
 
 ---
 
@@ -607,10 +607,10 @@ Collections.sort(allUsers);   // canonical order — same threads always acquire
 ## Questions you WILL get asked in Indian SDE-2 rounds
 
 ### "Why `long` and not `double`?"
-> *"0.1 + 0.2 = 0.30000000000000004 in floating point. Equal splits over hundreds of transactions drift. Long cents are exact — integer division + rounding remainder on the last participant means the sum equals the total every time."*
+> *"0.1 + 0.2 = 0.30000000000000004 in floating point. Equal splits over hundreds of transactions drift. Long rupees are exact — integer division + rounding remainder on the last participant means the sum equals the total every time."*
 
 ### "How does your percent split handle 33.33%?"
-> *"33.33% is stored as 3333 basis points — integer, no float. Sum must equal 10000. The last participant absorbs the cent-level rounding remainder so totals are exact."*
+> *"33.33% is stored as 3333 basis points — integer, no float. Sum must equal 10000. The last participant absorbs the rupee-level rounding remainder so totals are exact."*
 
 ### "What's the time complexity of simplifyDebts?"
 > *"O(U log U) — one linear pass to compute net balances, then heap operations over at most U users. U is typically small (< 50 in a friend group), so it's effectively O(1) in practice."*
@@ -653,7 +653,7 @@ Collections.sort(allUsers);   // canonical order — same threads always acquire
 | **Information Expert** (GRASP) | Validation on each strategy, balance graph on ExpenseManager | *"Sum-must-equal-total lives in each strategy; the graph invariant lives where the graph lives."* |
 | **Tell, Don't Ask** | ExpenseManager tells strategy to `calculate`; never inspects strategy state | *"Strategy returns splits; ExpenseManager doesn't peek into the algorithm's internals."* |
 | **Immutability** | `Expense`, `Settlement`, `User` | *"Ledger entries never change — that's the whole point of a ledger."* |
-| **Value Object** | `Split(userId, amountCents)` | *"Result of one strategy call — no identity, just data."* |
+| **Value Object** | `Split(userId, amount)` | *"Result of one strategy call — no identity, just data."* |
 
 **No Factory in the base — deliberately.** *"The 3 strategies are wired directly in the constructor via `Map.of(...)`. If config comes from YAML with an algorithm discriminator, I'd add a `SplitStrategyFactory` — that's a Step 5 answer."*
 
@@ -697,7 +697,7 @@ Collections.sort(allUsers);   // canonical order — same threads always acquire
 
 ### Mid-level (SDE-2) — this is the level most interviews target
 - Reaches Strategy for split types without prompting; all three strategies handle rounding correctly.
-- Money as `long` cents, percent as basis points — proposes this before it's asked.
+- Money as `long` rupees, percent as basis points — proposes this before it's asked.
 - `addOwed` normalizes the graph (never both directions positive) without hints.
 - Implements greedy simplification with two heaps. Names the tradeoff — *"greedy is not optimal, but optimal is NP-hard."*
 - Coarse-grained `synchronized`, calls it out as intentional.
@@ -715,4 +715,4 @@ Collections.sort(allUsers);   // canonical order — same threads always acquire
 
 ## 30-second summary (memorize for closing)
 
-> *"One orchestrator — ExpenseManager — and four immutable value objects: User, Expense, Split, Settlement. Strategy in the base for three split types, justified by the requirements explicitly naming all three. Money is `long` cents — never floats. PERCENT uses basis points so 33.33% is 3333 with integer arithmetic, last participant absorbs rounding remainder so totals are exact. Balance graph normalized: never both directions positive — addOwed cancels opposing first. simplifyDebts uses two priority queues: max-heap of creditors, min-heap of debtors, greedy match. Produces at most N-1 settlements — collapses a chain of 4 into 1, collapses circular debt into 0. Extensions: Observer for notifications, FX-rate Strategy for multi-currency, Repository for persistence."*
+> *"One orchestrator — ExpenseManager — and four immutable value objects: User, Expense, Split, Settlement. Strategy in the base for three split types, justified by the requirements explicitly naming all three. Money is `long` rupees — never floats. PERCENT uses basis points so 33.33% is 3333 with integer arithmetic, last participant absorbs rounding remainder so totals are exact. Balance graph normalized: never both directions positive — addOwed cancels opposing first. simplifyDebts uses two priority queues: max-heap of creditors, min-heap of debtors, greedy match. Produces at most N-1 settlements — collapses a chain of 4 into 1, collapses circular debt into 0. Extensions: Observer for notifications, FX-rate Strategy for multi-currency, Repository for persistence."*

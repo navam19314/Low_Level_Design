@@ -2,6 +2,6 @@ package com.conceptcoding.interviewquestions.hello_all_questions.splitwise.split
 
 public enum SplitType {
     EQUAL,    // values in input map ignored — divide equally among participants
-    EXACT,    // values are amounts in cents; MUST sum to total
+    EXACT,    // values are amounts in rupees; MUST sum to total
     PERCENT   // values are basis points (10000 = 100%); MUST sum to 10000
 }

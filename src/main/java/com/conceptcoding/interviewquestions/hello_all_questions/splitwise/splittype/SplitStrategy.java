@@ -12,14 +12,14 @@ public interface SplitStrategy {
     // Compute how much each participant owes for an expense.
     //
     // Parameters:
-    //   totalAmountCents  — the bill in cents (integer to avoid float rounding on money)
-    //   participantInputs — userId → strategy-specific number. The MEANING of the value depends on the strategy:
+    //   totalAmount        — the bill in rupees (whole units — integer, never a float)
+    //   participantInputs  — userId → strategy-specific number. The MEANING of the value depends on the strategy:
     //     EQUAL   → value is IGNORED (we only use the keys — who's participating)
-    //     EXACT   → value is that user's share IN CENTS
+    //     EXACT   → value is that user's share IN RUPEES
     //     PERCENT → value is that user's share IN BASIS POINTS (10000 = 100%)
     //
     // Contract:
-    //   The returned splits must sum EXACTLY to totalAmountCents. Every strategy is responsible
-    //   for handling cent-level remainders internally so the caller can trust the invariant.
-    List<Split> calculate(long totalAmountCents, Map<String, Long> participantInputs);
+    //   The returned splits must sum EXACTLY to totalAmount. Every strategy is responsible
+    //   for handling rounding remainders internally so the caller can trust the invariant.
+    List<Split> calculate(long totalAmount, Map<String, Long> participantInputs);
 }

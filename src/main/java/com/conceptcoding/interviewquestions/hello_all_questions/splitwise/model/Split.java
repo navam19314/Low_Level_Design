@@ -4,13 +4,13 @@ package com.conceptcoding.interviewquestions.hello_all_questions.splitwise.model
 public class Split {
 
     private final String userId;
-    private final long   amountCents;
+    private final long   amount;   // rupees
 
-    public Split(String userId, long amountCents) {
-        this.userId      = userId;
-        this.amountCents = amountCents;
+    public Split(String userId, long amount) {
+        this.userId = userId;
+        this.amount = amount;
     }
 
-    public String getUserId()      { return userId; }
-    public long   getAmountCents() { return amountCents; }
+    public String getUserId() { return userId; }
+    public long   getAmount() { return amount; }
 }

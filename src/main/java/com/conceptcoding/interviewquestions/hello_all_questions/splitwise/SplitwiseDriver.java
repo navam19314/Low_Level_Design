@@ -27,38 +27,38 @@ public class SplitwiseDriver {
         validationRejected(mgr);
     }
 
-    // Alice pays ₹30, split equally among A/B/C — each owes 1000 cents
+    // Alice pays ₹300, split equally among A/B/C — each owes ₹100
     private static void equalSplit(ExpenseManager mgr) {
-        System.out.println("=== EQUAL: Alice pays 3000, split A/B/C ===");
+        System.out.println("=== EQUAL: Alice pays ₹300, split A/B/C ===");
         Map<String, Long> p = new LinkedHashMap<>();
         p.put("alice", 0L); p.put("bob", 0L); p.put("carol", 0L);
-        Expense e = mgr.addExpense("alice", 3000L, SplitType.EQUAL, p, "Dinner");
+        Expense e = mgr.addExpense("alice", 300L, SplitType.EQUAL, p, "Dinner");
         printSplits(e.getSplits());
-        System.out.println("alice↔bob:   " + mgr.getBalance("alice", "bob")   + "  (expect +1000)");
-        System.out.println("alice↔carol: " + mgr.getBalance("alice", "carol") + "  (expect +1000)");
+        System.out.println("alice↔bob:   " + mgr.getBalance("alice", "bob")   + "  (expect +100)");
+        System.out.println("alice↔carol: " + mgr.getBalance("alice", "carol") + "  (expect +100)");
         System.out.println();
     }
 
-    // Bob pays ₹24; exact amounts 12/8/4
+    // Bob pays ₹240; exact amounts ₹120/₹80/₹40
     private static void exactSplit(ExpenseManager mgr) {
-        System.out.println("=== EXACT: Bob pays 2400, split 1200/800/400 ===");
+        System.out.println("=== EXACT: Bob pays ₹240, split ₹120/₹80/₹40 ===");
         Map<String, Long> p = new LinkedHashMap<>();
-        p.put("alice", 1200L); p.put("bob", 800L); p.put("carol", 400L);
-        Expense e = mgr.addExpense("bob", 2400L, SplitType.EXACT, p, "Groceries");
+        p.put("alice", 120L); p.put("bob", 80L); p.put("carol", 40L);
+        Expense e = mgr.addExpense("bob", 240L, SplitType.EXACT, p, "Groceries");
         printSplits(e.getSplits());
-        System.out.println("alice↔bob: " + mgr.getBalance("alice", "bob") + "  (1000-1200 → -200, bob now owed)");
+        System.out.println("alice↔bob: " + mgr.getBalance("alice", "bob") + "  (100-120 → -20, bob now owed)");
         System.out.println();
     }
 
-    // Carol pays ₹10; 33.33%/33.33%/33.34% in basis points — no float drift
+    // Carol pays ₹100; 33.33%/33.33%/33.34% in basis points — no float drift
     private static void percentSplit(ExpenseManager mgr) {
-        System.out.println("=== PERCENT: Carol pays 1000, 3333/3333/3334 bps ===");
+        System.out.println("=== PERCENT: Carol pays ₹100, 3333/3333/3334 bps ===");
         Map<String, Long> p = new LinkedHashMap<>();
         p.put("alice", 3333L); p.put("bob", 3333L); p.put("carol", 3334L);
-        Expense e = mgr.addExpense("carol", 1000L, SplitType.PERCENT, p, "Snacks");
+        Expense e = mgr.addExpense("carol", 100L, SplitType.PERCENT, p, "Snacks");
         printSplits(e.getSplits());
-        long sum = e.getSplits().stream().mapToLong(Split::getAmountCents).sum();
-        System.out.println("splits sum: " + sum + "  (expect exactly 1000 — no float drift)");
+        long sum = e.getSplits().stream().mapToLong(Split::getAmount).sum();
+        System.out.println("splits sum: " + sum + "  (expect exactly 100 — no float drift)");
         System.out.println();
     }
 
@@ -71,9 +71,9 @@ public class SplitwiseDriver {
         m.addUser(new User("C", "C", null));
         m.addUser(new User("D", "D", null));
 
-        m.addExpense("B", 1000L, SplitType.EQUAL, Map.of("A", 0L), "B paid for A");
-        m.addExpense("C", 1000L, SplitType.EQUAL, Map.of("B", 0L), "C paid for B");
-        m.addExpense("D", 1000L, SplitType.EQUAL, Map.of("C", 0L), "D paid for C");
+        m.addExpense("B", 100L, SplitType.EQUAL, Map.of("A", 0L), "B paid for A");
+        m.addExpense("C", 100L, SplitType.EQUAL, Map.of("B", 0L), "C paid for B");
+        m.addExpense("D", 100L, SplitType.EQUAL, Map.of("C", 0L), "D paid for C");
 
         System.out.println("net A=" + m.getNetBalance("A") + "  B=" + m.getNetBalance("B")
                 + "  C=" + m.getNetBalance("C") + "  D=" + m.getNetBalance("D"));
@@ -82,7 +82,7 @@ public class SplitwiseDriver {
         System.out.println("Settlements: " + s.size() + "  (expect 1)");
         for (Settlement st : s)
             System.out.println("  " + st.getDebtorId() + " pays " + st.getCreditorId()
-                    + "  " + st.getAmountCents() + " cents");
+                    + "  ₹" + st.getAmount());
         System.out.println();
     }
 
@@ -94,9 +94,9 @@ public class SplitwiseDriver {
         m.addUser(new User("B", "B", null));
         m.addUser(new User("C", "C", null));
 
-        m.addExpense("B", 1000L, SplitType.EQUAL, Map.of("A", 0L), "B paid for A");
-        m.addExpense("C", 1000L, SplitType.EQUAL, Map.of("B", 0L), "C paid for B");
-        m.addExpense("A", 1000L, SplitType.EQUAL, Map.of("C", 0L), "A paid for C");
+        m.addExpense("B", 100L, SplitType.EQUAL, Map.of("A", 0L), "B paid for A");
+        m.addExpense("C", 100L, SplitType.EQUAL, Map.of("B", 0L), "C paid for B");
+        m.addExpense("A", 100L, SplitType.EQUAL, Map.of("C", 0L), "A paid for C");
 
         System.out.println("net A=" + m.getNetBalance("A") + "  B=" + m.getNetBalance("B")
                 + "  C=" + m.getNetBalance("C") + "  (all expect 0)");
@@ -108,8 +108,8 @@ public class SplitwiseDriver {
     private static void validationRejected(ExpenseManager mgr) {
         System.out.println("=== Validation ===");
         try {
-            mgr.addExpense("alice", 1000L, SplitType.EXACT,
-                    Map.of("alice", 600L, "bob", 300L), "bad sum");
+            mgr.addExpense("alice", 100L, SplitType.EXACT,
+                    Map.of("alice", 60L, "bob", 30L), "bad sum");
         } catch (IllegalArgumentException e) {
             System.out.println("EXACT sum mismatch: " + e.getMessage());
         }
@@ -119,7 +119,7 @@ public class SplitwiseDriver {
             System.out.println("Unknown payer: " + e.getMessage());
         }
         try {
-            mgr.addExpense("alice", 1000L, SplitType.PERCENT,
+            mgr.addExpense("alice", 100L, SplitType.PERCENT,
                     Map.of("alice", 4000L, "bob", 5000L), "bps != 10000");
         } catch (IllegalArgumentException e) {
             System.out.println("PERCENT bps mismatch: " + e.getMessage());
@@ -128,6 +128,6 @@ public class SplitwiseDriver {
 
     private static void printSplits(List<Split> splits) {
         for (Split s : splits)
-            System.out.println("  " + s.getUserId() + " owes " + s.getAmountCents() + " cents");
+            System.out.println("  " + s.getUserId() + " owes ₹" + s.getAmount());
     }
 }

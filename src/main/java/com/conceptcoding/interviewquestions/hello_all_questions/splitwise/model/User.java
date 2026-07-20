@@ -1,5 +1,7 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.splitwise.model;
 
+// Immutable identity record. No behavior — a User is just a name/email tied to an id
+// that other classes (Expense, balances map) reference by string.
 public class User {
 
     private final String id;
