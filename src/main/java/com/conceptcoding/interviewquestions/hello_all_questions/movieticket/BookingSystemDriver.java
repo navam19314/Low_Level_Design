@@ -51,9 +51,18 @@ public class BookingSystemDriver {
             System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime());
         }
 
+        System.out.println("\n--- Available seats on S1 before booking ---");
+        List<String> before = system.getAvailableSeats("S1");
+        System.out.println("  " + before.size() + " seats free  (expect 100)");
+
         System.out.println("\n--- Happy-path booking ---");
         Booking b1 = system.book("S1", List.of("5", "6"));
         System.out.println("Booking id: " + b1.getBookingId());
+
+        System.out.println("\n--- Available seats on S1 after booking seats 5,6 ---");
+        List<String> after = system.getAvailableSeats("S1");
+        System.out.println("  " + after.size() + " seats free  (expect 98)");
+        System.out.println("  seat 5 still listed? " + after.contains("5") + "  (expect false)");
 
         System.out.println("\n--- Same seats again → IllegalStateException ---");
         try { system.book("S1", List.of("5")); }

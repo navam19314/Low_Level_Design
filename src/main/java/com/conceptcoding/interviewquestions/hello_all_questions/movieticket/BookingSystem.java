@@ -22,6 +22,7 @@ import java.util.UUID;
 public class BookingSystem {
 
     private final Map<String, City>      citiesById;
+//    helper for doing bookings in O(1)
     private final Map<String, Showtime>  showtimesById;
 
     public BookingSystem(List<City> cities) {
@@ -62,6 +63,17 @@ public class BookingSystem {
     public List<Showtime> getShowtimesAtTheater(Theater theater) {
         if (theater == null) return new ArrayList<>();
         return theater.getShowtimes();   // already returns a fresh list — no need to copy again
+    }
+
+    // The caller must pick specific seatIds before calling book() — this is how they
+    // find out what's free. Throws on unknown showtime, same as book(), since this is
+    // an exact-id lookup, not an exploratory query.
+    public List<String> getAvailableSeats(String showtimeId) {
+        Showtime showtime = showtimesById.get(showtimeId);
+        if (showtime == null) {
+            throw new NoSuchElementException("Showtime not found: " + showtimeId);
+        }
+        return showtime.getAvailableSeats();
     }
 
     // Create the Booking up front (just a data object, no state change yet),

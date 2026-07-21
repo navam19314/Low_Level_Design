@@ -113,6 +113,10 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 **Interviewer:** *"Yes, multi-seat atomic. If one seat is taken the whole booking fails."*
 > Signals the atomic multi-seat check.
 
+**You:** *"Since the caller picks specific seat ids, they'll need to see which seats are free first — should the system expose that?"*
+**Interviewer:** *"Yes, that's needed — the user has to know what's available before picking."*
+> Signals `getAvailableSeats(showtimeId)` — not optional, since `book()` requires the caller to already know valid seat ids.
+
 **You:** *"Concurrency — two users click the same seat at the same instant, exactly one wins?"*
 **Interviewer:** *"Exactly one. This is the important requirement."*
 > Signals `synchronized` on `Showtime.book` — the load-bearing decision.
@@ -124,10 +128,11 @@ Step 5 gets an extra minute because seat-hold extensions are practically guarant
 ### Requirements to write down
 
 ```
-IN SCOPE (all 3 test something the interviewer is grading)
+IN SCOPE (all 4 test something the interviewer is grading)
 1. List showtimes — search by movie title within a city, or browse a specific theater.
-2. Book multiple seats atomically — all-or-nothing if any seat is taken.
-3. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
+2. View available seats for a showtime — the caller must know valid seat ids before booking.
+3. Book multiple seats atomically — all-or-nothing if any seat is taken.
+4. Concurrent bookings of the same seat: EXACTLY ONE succeeds.
 
 ASSUMED (not requirements — simplifications we agreed on)
 - Uniform seat layout — flat numbered seats "1".."100" — no per-screen sizes.
@@ -239,7 +244,7 @@ Compact map of what to add and when (all Step-5 additions):
 
 > **Why only two indexes?** *"`book` needs O(1) resolution of a showtime id → `showtimesById`. Search starts with a city, so we need `citiesById`. Within a city, we scan its theaters and their showtimes — O(showtimes-in-city), nothing at interview scale. I'd only add a title index if search became a measured hot path."*
 
-### BookingSystem — public API (3 methods)
+### BookingSystem — public API (4 methods)
 
 ```java
 public class BookingSystem {
@@ -252,9 +257,12 @@ public class BookingSystem {
 
     public List<Showtime> searchMovies(String cityId, String title);   // city first, then title
     public List<Showtime> getShowtimesAtTheater(Theater theater);
+    public List<String>   getAvailableSeats(String showtimeId);        // caller needs this before book()
     public Booking        book(String showtimeId, List<String> seatIds);
 }
 ```
+
+> **Why `getAvailableSeats` is NOT optional here:** *"`book()`'s signature takes specific `seatIds` — the system doesn't auto-assign a seat like Parking Lot does with spots. That means the caller MUST have a way to discover what's free before calling book. Unlike Parking Lot's `getAvailableSpots()` (which really would be scope creep, since spots are auto-assigned there), this is a hard dependency of our own API design — not a nice-to-have."*
 
 ### Showtime — THE hot class
 
@@ -417,7 +425,21 @@ public List<Showtime> findShowtimesByTitle(String query) {   // on Screen (Theat
 
 > *"One scan over showtimes, filter by title. Returns showtimes directly — not movies — so the UI doesn't need a follow-up call to ask 'where is each movie playing?' One round-trip, complete result."*
 
-### 4.4 Dry-run — the 2-thread race (say this at the board)
+### 4.4 `getAvailableSeats` — trivial delegation, but not optional
+
+```java
+public List<String> getAvailableSeats(String showtimeId) {
+    Showtime showtime = showtimesById.get(showtimeId);
+    if (showtime == null) {
+        throw new NoSuchElementException("Showtime not found: " + showtimeId);
+    }
+    return showtime.getAvailableSeats();
+}
+```
+
+> *"This is a one-line delegation — the real logic (layout minus booked seats) already lives on Showtime, computed from the same `bookings` single-source-of-truth. I throw on an unknown showtime here, same as `book()`, because this is an exact-id lookup — not an exploratory query like `searchMovies`, where an empty result for a bad city id is more appropriate than an exception."*
+
+### 4.5 Dry-run — the 2-thread race (say this at the board)
 
 ```
 Setup: showtime "S1" for Inception at 7pm, all 100 seats free.
@@ -618,7 +640,7 @@ public void book(List<Seat> seats) {
 
 | Pattern / Principle | Where it lives | One-line justification |
 |---------------------|----------------|------------------------|
-| **Facade** | `BookingSystem` | *"Callers only touch BookingSystem — 3 methods hide the theaters, the showtime index, and the concurrency-protected Showtimes."* |
+| **Facade** | `BookingSystem` | *"Callers only touch BookingSystem — 4 methods hide the theaters, the showtime index, and the concurrency-protected Showtimes."* |
 | **Information Expert** (GRASP) | `Showtime.book` lives on Showtime | *"Only Showtime knows about its bookings, so it owns the atomic mutation."* |
 | **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.bookings` | *"BookingSystem creates a Booking and TELLS Showtime to store it. It never mutates the list from outside."* |
 | **Single Source of Truth** | `Showtime.bookings` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
@@ -736,7 +758,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 
 ## 30-second summary (memorize for closing)
 
-> *"Full BookMyShow hierarchy: City → Theater → Screen → Showtime, all as classes, plus Booking, Movie, and BookingSystem as the facade. Seat is a string — deliberately — because if Seat owned SeatStatus we'd have two sources of truth. BookingSystem owns `citiesById` for city-scoped search and `showtimesById` for O(1) book resolution. The core architectural call is that `Showtime.bookings` is the SINGLE source of truth for seat state — availability is derived. `Showtime.book` is synchronized, so check-then-add is atomic — exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Booking plus a `bookingsById` index; seat holds under the same per-showtime lock; promoting Seat to a class for tiers or per-seat locks."*
+> *"Full BookMyShow hierarchy: City → Theater → Screen → Showtime, all as classes, plus Booking, Movie, and BookingSystem as the facade. Seat is a string — deliberately — because if Seat owned SeatStatus we'd have two sources of truth. BookingSystem owns `citiesById` for city-scoped search and `showtimesById` for O(1) book resolution. Four public methods: search, browse-by-theater, `getAvailableSeats` — necessary because `book()` takes specific seat ids, so the caller must discover what's free first — and `book` itself. The core architectural call is that `Showtime.bookings` is the SINGLE source of truth for seat state — availability is derived, and `isAvailable`/`getAvailableSeats` are synchronized alongside `book` so reads never race the writer. `Showtime.book` is synchronized, so check-then-add is atomic — exactly one of N concurrent bookings wins. Multi-seat bookings are all-or-nothing — one unavailable seat throws with no state change. Extensions: cancellation via a back-ref on Booking plus a `bookingsById` index; seat holds under the same per-showtime lock; promoting Seat to a class for tiers or per-seat locks."*
 
 ---
 
@@ -763,7 +785,7 @@ void fifty_threads_race_for_one_seat_exactly_one_wins() throws Exception {
 | `model/Screen.java` | Physical screen inside a theater — id + name + `List<Showtime>` |
 | `model/Showtime.java` | **The hot class** — synchronized `book`; bookings = single source of truth |
 | `model/Booking.java` | Immutable — bookingId + seatIds |
-| `BookingSystem.java` | Facade — one `showtimesById` index, 3 public methods |
+| `BookingSystem.java` | Facade — one `showtimesById` index, 4 public methods |
 | `BookingSystemDriver.java` | Scenarios including a real 50-thread race |
 
 Run:
