@@ -272,12 +272,13 @@ public class Showtime {
     private final LocalDateTime datetime;
     private final List<Booking> bookings;        // single source of truth
 
-    public boolean            isAvailable(String seatId);
-    public List<String>       getAvailableSeats();
-    public boolean            matchesTitle(String query);  // delegates to movie — LoD-clean
+    public synchronized boolean isAvailable(String seatId);
+    public synchronized List<String>       getAvailableSeats();
     public synchronized void  book(Booking b);   // atomic check+store
 }
 ```
+
+> **Why is `isAvailable` synchronized too, not just `book`?** *"`book` mutates the `bookings` list under the lock, but a reader calling `isAvailable` or `getAvailableSeats` iterates that SAME list. If reads aren't synchronized, a reader can race a concurrent `book()` and throw `ConcurrentModificationException` — or see a half-written state. All three methods share Showtime's intrinsic lock; Java's reentrant locking means `book()` calling `isAvailable()` internally is still safe."*
 
 ### Booking & City & Theater & Screen & Movie — thin data holders
 
@@ -291,23 +292,19 @@ public class Booking {                           // immutable
 
 public class City {                              // id, name, List<Theater>
     public void addTheater(Theater t);
-    public List<Showtime> getAllShowtimes();                     // flatten across theaters
-    public List<Showtime> findShowtimesByTitle(String query);    // delegates to each theater
+    public List<Showtime> getAllShowtimes();      // flatten across theaters
 }
 
 public class Theater {                           // id, name, List<Screen>
     public void addScreen(Screen s);
-    public List<Showtime> getShowtimes();                        // flatten across screens
-    public List<Showtime> findShowtimesByTitle(String query);    // delegates to each screen
+    public List<Showtime> getShowtimes();         // flatten across screens
 }
 
 public class Screen {                            // id, name, List<Showtime>
-    public void addShowtime(Showtime s);                         // two-phase setup
-    public List<Showtime> findShowtimesByTitle(String query);    // asks each Showtime
+    public void addShowtime(Showtime s);          // two-phase setup
 }
 
-public class Movie {                             // id, title
-    public boolean titleContains(String query);  // owns the string; case-insensitive match
+public class Movie {                             // id, title — pure data, no behavior
 }
 ```
 
@@ -373,44 +370,50 @@ public Booking book(String showtimeId, List<String> seatIds) {
 ### 4.3 `searchMovies` — city-scoped title search
 
 ```java
-// BookingSystem — one hop to City, City handles the rest.
 public List<Showtime> searchMovies(String cityId, String title) {
     if (title == null || title.isEmpty()) return new ArrayList<>();
     City city = citiesById.get(cityId);
-    return city == null ? new ArrayList<>() : city.findShowtimesByTitle(title);
+    if (city == null) return new ArrayList<>();
+
+    String query = title.toLowerCase();
+    List<Showtime> results = new ArrayList<>();
+    for (Theater theater : city.getTheaters()) {
+        for (Screen screen : theater.getScreens()) {
+            for (Showtime s : screen.getShowtimes()) {
+                if (s.getMovie().getTitle().toLowerCase().contains(query)) {
+                    results.add(s);
+                }
+            }
+        }
+    }
+    return results;
 }
 ```
 
-The search **cascades down** — each level talks only to its direct children. This is Law of Demeter applied to the whole hierarchy:
+> *"City-first search matches how BookMyShow actually works — you pick a city, then search movies. Unknown city returns empty (not a throw) — the caller may be exploring. This is a direct triple-nested walk down the hierarchy — city → theaters → screens → showtimes — filtering by title inline. Simplest thing that satisfies the requirement."*
+
+### If the interviewer asks about Law of Demeter here
+
+`s.getMovie().getTitle().toLowerCase().contains(query)` is technically a chain through Showtime → Movie → String — three levels of reach. That's a legitimate LoD critique, and it's worth having the fix ready **without pre-building it into the base design**:
+
+> *"Right now `searchMovies` reaches through Showtime into Movie's internals. If that's a concern, I'd push the filter down: `Movie.titleContains(query)`, `Showtime.matchesTitle(query)` delegating to it, and each container level (`Screen`, `Theater`, `City`) exposing its own `findShowtimesByTitle` that delegates to its children. Every method then talks only to its direct collaborator — five one-hop methods instead of one triple-nested loop. I didn't build it that way up front because the base requirement is just 'search by title in a city' — this is a clean refactor to reach for if you want strict LoD, not before."*
 
 ```java
-// City → asks each Theater
-public List<Showtime> findShowtimesByTitle(String query) {
-    List<Showtime> result = new ArrayList<>();
-    for (Theater t : theaters) result.addAll(t.findShowtimesByTitle(query));
-    return result;
+// The LoD-clean version, if asked — five methods, each one hop:
+public boolean titleContains(String query) {                 // on Movie
+    return title.toLowerCase().contains(query.toLowerCase());
 }
-
-// Theater → asks each Screen  (same shape)
-// Screen  → asks each Showtime "do you match?"
-public List<Showtime> findShowtimesByTitle(String query) {
+public boolean matchesTitle(String query) {                  // on Showtime
+    return movie.titleContains(query);
+}
+public List<Showtime> findShowtimesByTitle(String query) {   // on Screen (Theater, City are the same shape)
     List<Showtime> result = new ArrayList<>();
     for (Showtime s : showtimes) if (s.matchesTitle(query)) result.add(s);
     return result;
 }
-
-// Showtime → asks Movie "does your title match?"
-public boolean matchesTitle(String query) { return movie.titleContains(query); }
-
-// Movie → owns the string; does the actual match
-public boolean titleContains(String query) {
-    return title.toLowerCase().contains(query.toLowerCase());
-}
 ```
 
-> **Senior callout — Law of Demeter:** *"No method chains through the hierarchy. `s.getMovie().getTitle().toLowerCase().contains(query)` would violate LoD — three levels of reach. Instead each type exposes one behaviour method: Movie owns `titleContains`, Showtime owns `matchesTitle`, and each container level exposes `findShowtimesByTitle`. If Movie renames `title` to `name` tomorrow, only Movie's own method changes — nothing else does."*
-
-> *"City-first search matches how BookMyShow actually works — you pick a city, then search movies. Unknown city returns empty (not a throw) — the caller may be exploring."*
+**Tradeoff to name:** *"Five small methods across five classes vs. one loop in one place. LoD wins on 'change locality' — if Movie renames `title` to `name`, only Movie's method changes. The loop version wins on 'everything's in one place to read.' For base scope I'd default to the loop; I'd only push it into five methods if the interviewer specifically probes on coupling."*
 
 > *"One scan over showtimes, filter by title. Returns showtimes directly — not movies — so the UI doesn't need a follow-up call to ask 'where is each movie playing?' One round-trip, complete result."*
 
@@ -618,7 +621,6 @@ public void book(List<Seat> seats) {
 | **Facade** | `BookingSystem` | *"Callers only touch BookingSystem — 3 methods hide the theaters, the showtime index, and the concurrency-protected Showtimes."* |
 | **Information Expert** (GRASP) | `Showtime.book` lives on Showtime | *"Only Showtime knows about its bookings, so it owns the atomic mutation."* |
 | **Tell, Don't Ask** | `BookingSystem` doesn't reach into `Showtime.bookings` | *"BookingSystem creates a Booking and TELLS Showtime to store it. It never mutates the list from outside."* |
-| **Law of Demeter** | Search cascades through the hierarchy | *"BookingSystem asks City → City asks Theater → Theater asks Screen → Screen asks Showtime → Showtime asks Movie. Each method talks only to its direct collaborators. No `s.getMovie().getTitle()...` chains."* |
 | **Single Source of Truth** | `Showtime.bookings` — availability is derived | *"One field. No separate bookedSeats set. No cross-field consistency to maintain."* |
 | **Immutability** | `Movie`, `Booking` | *"Immutable after construction; defensive copies of `seatIds` in both directions."* |
 | **Immutability** | `LocalDateTime datetime` on Showtime is `final` | *"A showtime's scheduled time doesn't change once created."* |
@@ -637,6 +639,7 @@ public void book(List<Seat> seats) {
 | "Persist across restart" | **Repository** | *"Inject `BookingRepository`; write on every book/cancel; replay on boot to rebuild indexes."* |
 | "Multi-region / multi-country" | **Facade + Composition** | *"`MultiRegionBookingSystem` is a Facade over `Map<region, BookingSystem>` that routes by region."* |
 | "Variable screen layouts (IMAX 100 vs intimate 30)" | Move constants onto `Screen` | *"Screen is already a class — add `rows` and `cols` fields; Showtime asks its Screen for dimensions."* |
+| "That search reaches through 3 objects — Law of Demeter?" | **LoD refactor** | *"Push the filter down: `Movie.titleContains`, `Showtime.matchesTitle` delegates to it, `Screen`/`Theater`/`City` each expose `findShowtimesByTitle` delegating to their children. Five one-hop methods instead of one triple-nested loop — see Step 4.3."* |
 
 ### Patterns to actively refuse if the interviewer baits you
 

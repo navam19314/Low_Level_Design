@@ -14,11 +14,4 @@ public class Movie {
 
     public String getId()    { return id; }
     public String getTitle() { return title; }
-
-    // Case-insensitive substring match. Belongs on Movie because Movie owns the title —
-    // callers ask "does this movie match?" instead of pulling the string out.
-    public boolean titleContains(String query) {
-        if (query == null) return false;
-        return title.toLowerCase().contains(query.toLowerCase());
-    }
 }

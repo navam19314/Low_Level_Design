@@ -23,13 +23,4 @@ public class Screen {
     public List<Showtime> getShowtimes() { return showtimes; }
 
     public void addShowtime(Showtime showtime) { showtimes.add(showtime); }
-
-    // Search: ask each Showtime "do you match?" — one hop.
-    public List<Showtime> findShowtimesByTitle(String query) {
-        List<Showtime> result = new ArrayList<>();
-        for (Showtime s : showtimes) {
-            if (s.matchesTitle(query)) result.add(s);
-        }
-        return result;
-    }
 }

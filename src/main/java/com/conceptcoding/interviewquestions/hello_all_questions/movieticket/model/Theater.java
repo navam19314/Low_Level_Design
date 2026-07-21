@@ -31,13 +31,4 @@ public class Theater {
         }
         return all;
     }
-
-    // Search: delegate to each screen. Never reach through screen into individual showtimes.
-    public List<Showtime> findShowtimesByTitle(String query) {
-        List<Showtime> result = new ArrayList<>();
-        for (Screen screen : screens) {
-            result.addAll(screen.findShowtimesByTitle(query));
-        }
-        return result;
-    }
 }

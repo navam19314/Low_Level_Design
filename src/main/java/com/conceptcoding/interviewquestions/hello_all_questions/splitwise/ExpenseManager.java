@@ -31,6 +31,7 @@ public class ExpenseManager {
     // We NEVER store both balances[A][B] > 0 AND balances[B][A] > 0 at once — see addOwed().
     private final Map<String, Map<String, Long>> balances   = new HashMap<>();
 
+//    immutable strategy at runtime
     private final Map<SplitType, SplitStrategy>  strategies = Map.of(
             SplitType.EQUAL,   new EqualSplitStrategy(),
             SplitType.EXACT,   new ExactSplitStrategy(),

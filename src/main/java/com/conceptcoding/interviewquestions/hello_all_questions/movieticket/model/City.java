@@ -31,13 +31,4 @@ public class City {
         }
         return all;
     }
-
-    // Search: delegate to each theater. City never reaches through theaters into screens.
-    public List<Showtime> findShowtimesByTitle(String query) {
-        List<Showtime> result = new ArrayList<>();
-        for (Theater theater : theaters) {
-            result.addAll(theater.findShowtimesByTitle(query));
-        }
-        return result;
-    }
 }

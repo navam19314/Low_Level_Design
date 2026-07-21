@@ -2,6 +2,7 @@ package com.conceptcoding.interviewquestions.hello_all_questions.movieticket;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Booking;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.City;
+import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Screen;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Showtime;
 import com.conceptcoding.interviewquestions.hello_all_questions.movieticket.model.Theater;
 
@@ -36,16 +37,31 @@ public class BookingSystem {
     }
 
     // Search movies by title within a specific city (BookMyShow-style — city first).
-    // Just resolve the city and delegate — City walks its own hierarchy. LoD-clean.
+    // Direct walk: city -> theaters -> screens -> showtimes, filter by title.
+    // (A stricter Law-of-Demeter version would push this filter down through each
+    // level instead of reaching into Movie from here — that's a Step-5 talking point.)
     public List<Showtime> searchMovies(String cityId, String title) {
         if (title == null || title.isEmpty()) return new ArrayList<>();
         City city = citiesById.get(cityId);
-        return city == null ? new ArrayList<>() : city.findShowtimesByTitle(title);
+        if (city == null) return new ArrayList<>();
+
+        String query = title.toLowerCase();
+        List<Showtime> results = new ArrayList<>();
+        for (Theater theater : city.getTheaters()) {
+            for (Screen screen : theater.getScreens()) {
+                for (Showtime s : screen.getShowtimes()) {
+                    if (s.getMovie().getTitle().toLowerCase().contains(query)) {
+                        results.add(s);
+                    }
+                }
+            }
+        }
+        return results;
     }
 
     public List<Showtime> getShowtimesAtTheater(Theater theater) {
         if (theater == null) return new ArrayList<>();
-        return new ArrayList<>(theater.getShowtimes());
+        return theater.getShowtimes();   // already returns a fresh list — no need to copy again
     }
 
     // Create the Booking up front (just a data object, no state change yet),

@@ -40,25 +40,25 @@ public class Showtime {
     public LocalDateTime getDatetime() { return datetime; }
 
     // Defensive copy — callers can't mutate our internal list.
-    public List<Booking> getBookings() {
+    public synchronized List<Booking> getBookings() {
         return new ArrayList<>(bookings);
     }
 
-    // Delegates to Movie — search doesn't reach through us into Movie's internals.
-    public boolean matchesTitle(String query) {
-        return movie.titleContains(query);
-    }
-
     // A seat is available iff no existing booking claims it.
-    public boolean isAvailable(String seatId) {
+    // SYNCHRONIZED — reads must serialize with book()'s writes to the same `bookings`
+    // ArrayList. Without this, a reader here can race book()'s `bookings.add(...)` and
+    // throw ConcurrentModificationException (or see a torn view) even though book()
+    // itself holds the lock — ArrayList iteration isn't safe against an UNSYNCHRONIZED
+    // concurrent writer.
+    public synchronized boolean isAvailable(String seatId) {
         for (Booking b : bookings) {
             if (b.getSeatIds().contains(seatId)) return false;
         }
         return true;
     }
 
-    // Layout minus booked seats.
-    public List<String> getAvailableSeats() {
+    // Layout minus booked seats. Synchronized for the same reason as isAvailable.
+    public synchronized List<String> getAvailableSeats() {
         Set<String> booked = new HashSet<>();
         for (Booking b : bookings) {
             booked.addAll(b.getSeatIds());
