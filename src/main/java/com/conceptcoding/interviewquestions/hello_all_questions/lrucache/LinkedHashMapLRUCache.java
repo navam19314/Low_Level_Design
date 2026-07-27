@@ -3,21 +3,19 @@ package com.conceptcoding.interviewquestions.hello_all_questions.lrucache;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * "Production-clean" alternative — same semantics in 10 lines using Java's
- * {@link LinkedHashMap} with {@code accessOrder=true}. Override
- * {@link #removeEldestEntry} to evict when over capacity.
- *
- * <p>Why we still implement the from-scratch version: the from-scratch design
- * is the interview signal — it proves you understand the HashMap + DLL composition
- * that underlies LinkedHashMap. Mention BOTH in the room: "in production I'd use
- * this 10-line LinkedHashMap version; in this interview I'm showing you the
- * underlying mechanics."
- */
+// "Production-clean" alternative — same semantics in 10 lines using Java's
+// LinkedHashMap with accessOrder=true. Override removeEldestEntry to evict
+// when over capacity.
+//
+// Why we still implement the from-scratch version: it's the interview signal —
+// it proves you understand the HashMap + DLL composition that underlies
+// LinkedHashMap. Mention BOTH in the room: "in production I'd use this 10-line
+// LinkedHashMap version; in this interview I'm showing you the underlying
+// mechanics."
 public class LinkedHashMapLRUCache<K, V> implements Cache<K, V> {
 
     private final int capacity;
-    // accessOrder=true → get() reorders to "most recent" automatically
+    // accessOrder=true -> get() reorders to "most recent" automatically
     private final LinkedHashMap<K, V> map;
 
     public LinkedHashMapLRUCache(int capacity) {

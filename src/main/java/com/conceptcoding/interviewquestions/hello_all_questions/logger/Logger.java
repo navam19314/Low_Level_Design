@@ -6,18 +6,16 @@ import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.Log
 import java.time.Clock;
 import java.util.List;
 
-/**
- * The public face of the library — the only class application code interacts with.
- *
- * <p>Config is set ONCE at construction; the destinations list is then immutable.
- * That's what lets us iterate without locking: no thread can race a structural
- * change because no API exposes one. Adding {@code addDestination} would force
- * locking around every iteration with zero requirement-driven benefit.
- *
- * <p>Timestamp and thread name are captured at the top of {@code log()} (NOT
- * inside each destination), so every destination sees the same moment for the
- * same record. Capturing per-destination would produce per-line clock skew.
- */
+// The public face of the library — the only class application code interacts with.
+//
+// Config is set ONCE at construction; the destinations list is then immutable.
+// That's what lets us iterate without locking: no thread can race a structural
+// change because no API exposes one. Adding addDestination() would force locking
+// around every iteration with zero requirement-driven benefit.
+//
+// Timestamp and thread name are captured at the top of log() (NOT inside each
+// destination), so every destination sees the same moment for the same record.
+// Capturing per-destination would produce per-line clock skew.
 public class Logger {
 
     private final List<Destination> destinations;

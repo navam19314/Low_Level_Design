@@ -3,24 +3,20 @@ package com.conceptcoding.interviewquestions.hello_all_questions.lrucache;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * LRU cache via HashMap + doubly-linked list — the canonical O(1) design.
- *
- * <pre>
- *   HashMap<K, Node>   — O(1) lookup of the node for a key
- *   Doubly-linked list — O(1) move-to-head and remove-tail (eviction)
- *
- *   head (most recently used)  ◀── ... ──▶  tail (least recently used)
- * </pre>
- *
- * <p>Sentinel head/tail nodes eliminate the head/tail null checks every time
- * a node moves — the cleanest way to write doubly-linked-list ops in Java.
- *
- * <p>Thread-safety: every public method is {@code synchronized}. For higher
- * throughput you'd reach for {@code java.util.concurrent} primitives (or just
- * use {@code ConcurrentHashMap} + per-bucket linked lists); for interview
- * scope coarse-grained sync is correct and trivially obvious.
- */
+// LRU cache via HashMap + doubly-linked list — the canonical O(1) design.
+//
+//   HashMap<K, Node>   — O(1) lookup of the node for a key
+//   Doubly-linked list — O(1) move-to-head and remove-tail (eviction)
+//
+//   head (most recently used)  <-- ... -->  tail (least recently used)
+//
+// Sentinel head/tail nodes eliminate the head/tail null checks every time
+// a node moves — the cleanest way to write doubly-linked-list ops in Java.
+//
+// Thread-safety: every public method is synchronized. For higher throughput
+// you'd reach for java.util.concurrent primitives (or ConcurrentHashMap +
+// per-bucket linked lists); for interview scope coarse-grained sync is
+// correct and trivially obvious.
 public class LRUCache<K, V> implements Cache<K, V> {
 
     private final int capacity;
@@ -31,7 +27,7 @@ public class LRUCache<K, V> implements Cache<K, V> {
     public LRUCache(int capacity) {
         if (capacity <= 0) throw new IllegalArgumentException("capacity must be > 0");
         this.capacity = capacity;
-        // Sentinels point at each other initially → empty list.
+        // Sentinels point at each other initially -> empty list.
         this.head = new Node<>(null, null);
         this.tail = new Node<>(null, null);
         head.next = tail;
@@ -95,7 +91,7 @@ public class LRUCache<K, V> implements Cache<K, V> {
         addToHead(node);
     }
 
-    /** Doubly-linked-list node. Package-private so the cache touches fields directly. */
+    // Doubly-linked-list node. Package-private so the cache touches fields directly.
     static final class Node<K, V> {
         final K key;
         V value;

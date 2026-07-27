@@ -2,15 +2,13 @@ package com.conceptcoding.interviewquestions.hello_all_questions.logger.model;
 
 import java.time.Instant;
 
-/**
- * Immutable value object representing one log call. Built once at the call site,
- * read by every destination, never mutated. Immutability is what makes it safe
- * to share across threads and across destinations with no synchronization.
- *
- * <p>This is a class (not 4 raw parameters) because adding a new field later —
- * loggerName, requestId, MDC map — is a one-line change here instead of a
- * signature change on every Destination, Sink, and Formatter method.
- */
+// Immutable value object representing one log call. Built once at the call site,
+// read by every destination, never mutated. Immutability is what makes it safe
+// to share across threads and across destinations with no synchronization.
+//
+// This is a class (not 4 raw parameters) because adding a new field later —
+// loggerName, requestId, MDC map — is a one-line change here instead of a
+// signature change on every Destination, Sink, and Formatter method.
 public final class LogRecord {
 
     private final Instant timestamp;

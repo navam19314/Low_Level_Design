@@ -2,11 +2,9 @@ package com.conceptcoding.interviewquestions.hello_all_questions.logger.formatte
 
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.LogRecord;
 
-/**
- * Minimal JSON encoder — enough for the interview without pulling Jackson/Gson.
- * Escapes the message; ts/level/thread are safe primitive shapes. In production
- * you'd delegate to a real JSON library to handle every edge case.
- */
+// Minimal JSON encoder — enough for the interview without pulling Jackson/Gson.
+// Escapes the message; ts/level/thread are safe primitive shapes. In production
+// you'd delegate to a real JSON library to handle every edge case.
 public class JsonFormatter implements Formatter {
 
     @Override

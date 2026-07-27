@@ -5,24 +5,22 @@ import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.Log
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.LogRecord;
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.sink.Sink;
 
-/**
- * One configured output target. Owns:
- *   - a level threshold (filter records below it)
- *   - a formatter (serialize to string — Strategy)
- *   - a sink (write bytes — Strategy)
- *   - a per-destination lock (protect the shared sink resource)
- *
- * <p>Why this class is concrete (not abstract): there's exactly one valid
- * filter-format-lock-write shape. All variation lives behind Formatter and Sink.
- *
- * <p>Why composition (not subclasses like {@code JsonFileDestination}):
- * format and sink-type vary INDEPENDENTLY per the requirements. With N formats
- * × M sink types, inheritance would be N×M classes; composition is N+M.
- *
- * <p>Failure isolation: any exception from {@code sink.write} is caught and
- * routed to stderr — never propagates back to Logger.log, so one bad destination
- * can't take out the others or crash the caller.
- */
+// One configured output target. Owns:
+//   - a level threshold (filter records below it)
+//   - a formatter (serialize to string — Strategy)
+//   - a sink (write bytes — Strategy)
+//   - a per-destination lock (protect the shared sink resource)
+//
+// Why this class is concrete (not abstract): there's exactly one valid
+// filter-format-lock-write shape. All variation lives behind Formatter and Sink.
+//
+// Why composition (not subclasses like JsonFileDestination): format and sink-type
+// vary INDEPENDENTLY per the requirements. With N formats x M sink types,
+// inheritance would be N x M classes; composition is N + M.
+//
+// Failure isolation: any exception from sink.write is caught and routed to
+// stderr — never propagates back to Logger.log, so one bad destination can't
+// take out the others or crash the caller.
 public class Destination {
 
     private final Formatter formatter;
@@ -50,10 +48,13 @@ public class Destination {
         synchronized (lock) {
             try {
                 sink.write(formatted);
-            } catch (Throwable t) {
+            } catch (Exception e) {
                 // Failure isolation: one bad sink (disk full, broken pipe, etc.)
                 // must not propagate back to Logger.log or take out other destinations.
-                System.err.println("logger: sink write failed: " + t.getMessage());
+                // Catch Exception, not Throwable — we don't want to swallow JVM
+                // Errors like OutOfMemoryError; those should kill the process, not
+                // get silently absorbed by a logging call.
+                System.err.println("logger: sink write failed: " + e.getMessage());
             }
         }
     }

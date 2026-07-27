@@ -1,192 +1,184 @@
 # LRU Cache — 45-min LLD Interview Walkthrough
 
-**Target role:** SDE‑2 (Amazon, Adobe, Microsoft, Atlassian, etc.)
+**Target role:** SDE-2 (Amazon, Adobe, Microsoft, Atlassian)
 
-> LRU Cache is the **single most-asked LLD interview question** at SDE‑2 level. The headline senior signal is the **HashMap + doubly-linked-list composition** giving O(1) for get / put / evict. Get the data structures right, write it cleanly with sentinel head/tail nodes, mention `LinkedHashMap` as the production-clean alternative — that's the full senior signal.
-
-> Often this question is asked in a 30–45 min slot that blends DSA + LLD. Be ready for both framings.
+> The **single most-asked LLD problem** at SDE-2 level. The senior signal is the **HashMap + doubly-linked-list composition** giving O(1) for get/put/evict. Get the data structures right, write it cleanly with sentinel head/tail nodes, mention `LinkedHashMap` as the production-clean alternative — that's the full signal. Often asked in a 30–45 min slot that blends DSA + LLD — be ready for both framings.
 
 ---
 
-## Time budget (45 min)
+## Time budget
 
-| Step | Activity                                                                                | Budget   | Cumulative |
-| ---- | --------------------------------------------------------------------------------------- | -------- | ---------- |
-| 1    | Requirements                                                                            | ~4 min   | 4          |
-| 2    | Entities & Relationships (Cache interface; LRU as a strategy)                           | ~3 min   | 7          |
-| 3    | Class Design (HashMap + DLL composition, sentinel nodes)                                | ~8 min   | 15         |
-| 4    | Implementation (`get`, `put`, the three DLL helpers + dry-run)                          | ~18 min  | 33         |
-| 5    | Extensibility (TTL, LFU, ARC, distributed, thread-safety variants)                      | ~10 min  | 43         |
-| —    | Wrap & questions                                                                        | ~2 min   | 45         |
+| Step | Activity | Budget | Cumulative |
+|------|----------|--------|------------|
+| 1 | Requirements | ~4 min | 4 |
+| 2 | Entities & relationships | ~3 min | 7 |
+| 3 | Class design | ~8 min | 15 |
+| 4 | Implementation + dry-run | ~18 min | 33 |
+| 5 | Extensibility | ~10 min | 43 |
+| — | Wrap | ~2 min | 45 |
 
-Step 4 is the longest — DLL operations need precise pointer wrangling.
-
-Watch the clock at minute **4**, minute **15** (start coding), minute **33** (extensibility).
+Step 4 is the longest — DLL pointer manipulation needs precision.
 
 ---
 
-## Mental models — internalize these BEFORE you walk in
+## Mental models — memorize before you walk in
 
 ### M1. The two-data-structures trick
 
 ```
    We need O(1) for ALL of: get, put, evict-LRU.
 
-   HashMap alone:               O(1) get/put, but eviction = O(N) (scan for oldest)
-   DoublyLinkedList alone:      O(N) get (linear scan for key)
-   Combine the two:             O(1) get (map lookup) + O(1) move-to-head (DLL) ⭐
+   HashMap alone:          O(1) get/put, but eviction = O(N) (scan for oldest)
+   DoublyLinkedList alone: O(N) get (linear scan for key)
+   Combine the two:        O(1) get (map lookup) + O(1) move-to-head (DLL) ⭐
 
-                                              key → Node lookup
-                                              ┌─────────────────┐
-                                              │  HashMap<K,Node>│
-                                              └────────┬────────┘
-                                                       │
-                                                       ▼ (each Node lives in BOTH)
-              MRU                                                                    LRU
-              ▼                                                                      ▼
-       [head ⇄ Node(a) ⇄ Node(b) ⇄ Node(c) ⇄ Node(d) ⇄ Node(e) ⇄ tail]
-       sentinel                                                       sentinel
+                                       key → Node lookup
+                                       ┌─────────────────┐
+                                       │  HashMap<K,Node>│
+                                       └────────┬────────┘
+                                                │
+                                                v (each Node lives in BOTH)
+           MRU                                                              LRU
+           v                                                                v
+    [head ⇄ Node(a) ⇄ Node(b) ⇄ Node(c) ⇄ Node(d) ⇄ Node(e) ⇄ tail]
+    sentinel                                                       sentinel
 
    On get(b):    HashMap → b's Node → moveToHead(b) → b now sits next to head
-   On put(f) when capacity is reached:
-                 lru = tail.prev (= e here) → removeNode + map.remove(e.key)
+   On put(f) when at capacity:
+                 lru = tail.prev (= e) → removeNode + map.remove(e.key)
                  then addToHead(new f)
    Every operation is O(1). No scans. Ever.
 ```
 
-**Senior soundbite (memorize):** *"Two data structures, composed. HashMap gives O(1) key→node. Doubly-linked list gives O(1) move-to-head (refresh) and O(1) remove-tail (evict). One without the other gives you O(N) on at least one operation. The combination is THE textbook LRU implementation."*
+**Senior soundbite:** *"Two data structures, composed. HashMap gives O(1) key→node. Doubly-linked list gives O(1) move-to-head (refresh) and O(1) remove-tail (evict). One without the other gives you O(N) on at least one operation. This is THE textbook LRU implementation."*
 
 ### M2. Why sentinel head/tail nodes
 
 ```
-   Without sentinels:                       With sentinels:
-   ------------------                       ----------------
-                                                                   
-   addToHead(node):                         addToHead(node):
-     if (head == null) {                      node.prev = head
-       head = node                            node.next = head.next
-       tail = node                            head.next.prev = node
-     } else {                                 head.next = node
-       node.next = head
-       head.prev = node                       — same 4 lines for EVERY case
-       head = node                              (empty list or full)
-     }                                          — no null checks needed
-                                                — easier to get right under pressure
+   Without sentinels, addToHead needs a branch for the empty-list case:
+     if (head == null) { head = node; tail = node; }
+     else { node.next = head; head.prev = node; head = node; }
 
-   Same simplification on removeNode and moveToHead.
+   With sentinels, it's the SAME 4 lines for every case — empty or full:
+     node.prev = head;
+     node.next = head.next;
+     head.next.prev = node;
+     head.next = node;
+
+   Same simplification applies to removeNode and moveToHead.
 ```
 
-> **Why this is a senior signal:** *Sentinel head/tail nodes are the cleanest pattern for doubly-linked-list operations in Java. They eliminate every null check, every "is this the head?" branch. Writing this without sentinels gets you 30 minutes of off-by-one bugs.*
+> **Why this is a senior signal:** Sentinels eliminate every null check and every "is this the head?" branch in DLL operations. Writing this without sentinels is where 30 minutes of off-by-one bugs live.
 
 ### M3. Eviction policy as a Strategy seam (Step-5 readiness)
 
 ```
    Today: LRU. Tomorrow: maybe LFU, maybe TTL.
 
-   By making the EVICTION POLICY pluggable, we don't have to rewrite Cache:
-
      interface Cache<K, V>
         ↑       ↑       ↑       ↑
-     LRUCache  LFUCache TTLCache W-TinyLFU
-     (HashMap  (HashMap (HashMap (LRU + admission
-       + DLL)    + freq   + heap   filter)
-                 buckets)  by exp)
+    LRUCache  LFUCache TTLCache W-TinyLFU
+    (HashMap  (HashMap (HashMap (LRU + admission
+      + DLL)   + freq   + heap    filter)
+                buckets)  by exp)
 
-   Each implementation uses different data structures internally, but they all
-   satisfy the same Cache contract — get / put / size / clear.
+   Each impl uses different internal data structures but all satisfy the
+   same Cache contract — get / put / size / clear.
 ```
 
 ---
 
-## STEP 1 — Requirements (~4 min)
+## Step 1 — Requirements (~4 min)
 
-### What to say out loud (opener)
-> "LRU at interview scope is usually a small problem with a big senior signal — the data structure composition. Let me clarify what I should optimize for."
+### Clarifying dialogue
 
-### Probe the 4 themes
+**You:** *"A fixed-capacity cache with `get(key)` and `put(key, value)` — both must be O(1)? Eviction is LRU specifically?"*
+**Interviewer:** *"Yes, both O(1), LRU eviction."*
+> Signals the HashMap + DLL composition immediately — no other structure gives O(1) on both.
 
-| Theme               | Question to ask                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Primary capabilities| "Fixed-capacity cache with `get(key) → value` and `put(key, value)`. Both must be O(1)? Eviction is LRU?" |
-| Rules               | "On `put` of an existing key, value replaces and key's recency refreshes? Same key never grows the size?" |
-| Error handling      | "Get on a missing key returns null (not exception)? Capacity 0 / negative rejected at construction?" |
-| Concurrency         | "Multi-threaded callers — `synchronized` is fine, OR do you want lock-free?" |
+**You:** *"Does `get` on an existing key refresh its recency? Does `put` on an existing key update the value AND refresh recency, without growing the size?"*
+**Interviewer:** *"Yes to both."*
+> This is the trap most candidates miss — `get` isn't a pure read, it mutates the DLL. And the update-branch needs an early return so size never inflates.
 
-### What to write on the board
+**You:** *"Get on a missing key — return null, or throw?"*
+**Interviewer:** *"Return null."*
+
+**You:** *"Concurrent callers — is `synchronized` sufficient, or do you want something more exotic?"*
+**Interviewer:** *"Synchronized is fine for now."*
+> Signals coarse-grained locking is the right default; per-key/striped locking is a Step-5 answer.
+
+**You:** *"Out of scope for v1 — TTL expiration, LFU/ARC, persistence, distributed coherence?"*
+**Interviewer:** *"Correct — those are follow-ups."*
+
+### Requirements to write down
 
 ```
-Functional Requirements
-1. Generic <K, V> cache with a fixed CAPACITY.
-2. O(1) get(key) → value, or null if absent.
+IN SCOPE
+1. Generic <K, V> cache with a fixed capacity.
+2. O(1) get(key) -> value, or null if absent.
 3. O(1) put(key, value) — inserts or replaces.
-4. Eviction: LRU — when at capacity and inserting a new key, evict the
-   LEAST recently used entry.
-5. get(key) REFRESHES recency — the entry now counts as most-recently-used.
-6. put(existing-key) updates value AND refreshes recency, without growing size.
+4. Eviction: LRU — at capacity, inserting a new key evicts the LEAST
+   recently used entry.
+5. get(key) REFRESHES recency — entry becomes most-recently-used.
+6. put(existing key) updates value AND refreshes recency, without
+   growing size.
 7. Thread-safe.
 
-Out of Scope
-- TTL-based expiration (Step 5 — distinct eviction policy)
-- LFU / ARC / W-TinyLFU (Step 5)
+OUT OF SCOPE (all Step-5 extensions)
+- TTL-based expiration
+- LFU / ARC / W-TinyLFU
 - Persistence
-- Distributed coherence across multiple machines
+- Distributed coherence across machines
 - Bulk operations (getAll, putAll)
 - Statistics (hit rate, miss count)
 ```
 
-### Close the step
-> "Three load-bearing requirements: O(1) on BOTH `get` and `put`, recency refresh on `get`, and the eviction trigger. Those three together force the HashMap + DLL composition."
-
 ---
 
-## STEP 2 — Entities & Relationships (~3 min)
-
-### What to say out loud
-> "**Three classes max**: a generic `Cache<K, V>` interface, an `LRUCache<K, V>` implementation that owns the HashMap + doubly-linked-list internally, and a private `Node<K, V>` for the DLL. The interface makes alternative eviction policies pluggable later (Step 5)."
-
-### Why no `EvictionPolicy` interface in the base
-> "Today there's exactly one policy — LRU. Adding an EvictionPolicy interface now would be speculative abstraction. If LFU or TTL come up in Step 5, we'd factor it out then. One-sentence test fails: 'I can't state a concrete design pressure NOW that demands the abstraction' — so skip it."
-
-### What to write on the board
+## Step 2 — Entities & relationships (~3 min)
 
 ```
 Entities
-- Cache<K, V>          (interface — supports multiple impls later)
-- LRUCache<K, V>       (concrete — HashMap<K, Node<K,V>> + doubly-linked list w/ sentinels)
-- Node<K, V>           (private static — DLL node holding key + value + prev/next pointers)
+- Cache<K, V>      interface — supports multiple impls later
+- LRUCache<K, V>   concrete — HashMap<K, Node<K,V>> + doubly-linked list w/ sentinels
+- Node<K, V>       private static — DLL node: key + value + prev/next pointers
 
-Optional bonus class:
-- LinkedHashMapLRUCache (the same contract via Java's built-in LinkedHashMap + accessOrder)
-  Useful to mention in interview to show you know both approaches.
+Optional bonus class
+- LinkedHashMapLRUCache — same contract via Java's built-in LinkedHashMap +
+  accessOrder. Worth mentioning to show you know both approaches.
 
 NOT entities
-- EvictionPolicy interface  (speculative — Step 5)
-- Statistics / Metrics      (not in requirements)
+- EvictionPolicy interface — speculative; only one policy exists today (Step 5)
+- Statistics / Metrics — not in requirements
 
 Relationships
 - LRUCache owns:
-    HashMap<K, Node<K, V>>           — O(1) key→node lookup
-    Node head, Node tail (sentinels) — bounds the doubly-linked list
-- Each Node lives in BOTH the HashMap (as a value) and the DLL (chained via prev/next).
+    HashMap<K, Node<K, V>>            — O(1) key -> node lookup
+    Node head, Node tail (sentinels)  — bounds the doubly-linked list
+- Each Node lives in BOTH the HashMap (as a value) and the DLL (via prev/next).
   That dual residency is what makes O(1) operations possible.
 ```
 
-### Diagram — boxes and arrows
+### Why no `EvictionPolicy` interface in the base?
+
+> *"Today there's exactly one policy — LRU. Adding an interface now would be speculative abstraction — the one-sentence test fails: I can't state a concrete design pressure right now that demands it. If LFU or TTL come up in Step 5, that's when I'd factor it out."*
+
+### Class diagram
 
 ```
    +-----------------------------+
-   | <<interface>>  Cache<K, V>  |    + get(K) → V
-   |                              |    + put(K, V)
-   +-----------------------------+    + size(): int  + clear()
-            ▲             ▲
+   | <<interface>>  Cache<K, V>  |    get(K) -> V
+   |                              |    put(K, V)
+   +-----------------------------+    size(): int  clear()
+            ^             ^
             │             │
-   +─────────────────+   +─────────────────────────────────────────┐
-   |  LRUCache<K, V> |   |  LinkedHashMapLRUCache<K, V> (10-liner) │
-   +─────────────────+   +─────────────────────────────────────────┘
+   +─────────────────+   +─────────────────────────────────────────+
+   |  LRUCache<K, V> |   |  LinkedHashMapLRUCache<K, V> (10-liner) |
+   +─────────────────+   +─────────────────────────────────────────+
    | - capacity      |
    | - index:        |
    |     HashMap<K,  |        index ──────────────┐
-   |     Node<K,V>>  |                            ▼
+   |     Node<K,V>>  |                            v
    | - head: Node    |   [head ⇄ Node(a) ⇄ Node(b) ⇄ ... ⇄ Node(z) ⇄ tail]
    | - tail: Node    |    sentinel                                  sentinel
    +─────────────────+
@@ -197,17 +189,17 @@ Relationships
 
 ---
 
-## STEP 3 — Class Design (~8 min)
+## Step 3 — Class design (~8 min)
 
-### LRUCache — state ↔ requirement table
+### LRUCache — state derived from requirements
 
-| Requirement                              | State LRUCache must own                                  |
-| ---------------------------------------- | -------------------------------------------------------- |
-| O(1) lookup by key                        | `Map<K, Node<K, V>> index` (HashMap)                     |
-| O(1) move-to-head + remove-tail           | Doubly-linked list with sentinel head + tail              |
-| Bounded capacity                         | `int capacity`                                            |
+| Requirement | State |
+|-------------|-------|
+| O(1) lookup by key | `Map<K, Node<K, V>> index` (HashMap) |
+| O(1) move-to-head + remove-tail | Doubly-linked list with sentinel head + tail |
+| Bounded capacity | `int capacity` |
 
-### Class outline (write this on the board)
+### Class outline
 
 ```java
 public class LRUCache<K, V> implements Cache<K, V> {
@@ -227,7 +219,7 @@ public class LRUCache<K, V> implements Cache<K, V> {
     public synchronized V    get(K key)            { /* Step 4 */ }
     public synchronized void put(K key, V value)   { /* Step 4 */ }
     public synchronized int  size()                { return index.size(); }
-    public synchronized void clear()               { /* reset both structures */ }
+    public synchronized void clear()                { /* reset both structures */ }
 
     // private DLL ops
     private void addToHead(Node<K,V> n);
@@ -235,7 +227,7 @@ public class LRUCache<K, V> implements Cache<K, V> {
     private void moveToHead(Node<K,V> n);
 
     static final class Node<K, V> {
-        final K key;          // ← needed so eviction can remove from the index
+        final K key;          // needed so eviction can remove from the index
         V value;
         Node<K,V> prev, next;
         Node(K key, V value) { this.key = key; this.value = value; }
@@ -243,17 +235,15 @@ public class LRUCache<K, V> implements Cache<K, V> {
 }
 ```
 
-> **Why the Node carries the KEY (not just the value):** *when evicting the LRU, we have only the Node (`tail.prev`). To also remove it from the HashMap index, we need its key. Without storing the key on the Node, we'd have to scan the HashMap — destroying the O(1) guarantee.*
+> **Why the Node carries the KEY (not just the value):** *"When evicting the LRU, we have only the Node (`tail.prev`). To also remove it from the HashMap index, we need its key. Without storing the key on the Node, we'd have to scan the HashMap — destroying the O(1) guarantee."*
 
-### The principle to verbalize — composition, not inheritance
-> "I'm composing TWO data structures inside one class — HashMap for lookups, doubly-linked list for ordering. Each does what it's best at. Trying to do this with inheritance — say, extending HashMap — would muddle the two concerns. Composition is the right tool here."
+### The principle to say aloud — composition, not inheritance
+
+> *"I'm composing TWO data structures inside one class — HashMap for lookups, doubly-linked list for ordering. Each does what it's best at. Extending HashMap instead would muddle the two concerns. Composition is the right tool here."*
 
 ---
 
-## STEP 4 — Implementation (~18 min)
-
-### Open by asking
-> "Real Java or pseudo-code? I'll do `get` first, then `put` (it has the eviction branch), then the three DLL helpers, then dry-run."
+## Step 4 — Implementation + dry-run (~18 min)
 
 ### 4.1 `get` — lookup + recency refresh
 
@@ -266,7 +256,7 @@ public synchronized V get(K key) {
 }
 ```
 
-> **Senior callout:** *"Three lines. The trick is the `moveToHead` — `get` is NOT a pure read; it MUTATES the DLL ordering. That's why it's synchronized."*
+> **Senior callout:** *"Three lines. The trick is `moveToHead` — `get` is NOT a pure read; it MUTATES the DLL ordering. That's why it's synchronized."*
 
 ### 4.2 `put` — insert OR update + maybe-evict
 
@@ -282,7 +272,7 @@ public synchronized void put(K key, V value) {
     if (index.size() == capacity) {
         Node<K, V> lru = tail.prev;     // least-recently-used
         removeNode(lru);
-        index.remove(lru.key);          // ← uses node.key to clean the index
+        index.remove(lru.key);          // uses node.key to clean the index
     }
     Node<K, V> node = new Node<>(key, value);
     addToHead(node);
@@ -293,10 +283,8 @@ public synchronized void put(K key, V value) {
 **Three callouts:**
 
 1. *"Update branch returns WITHOUT growing the size. Without this early return, repeatedly updating the same key would inflate the index and trigger spurious evictions."*
-
 2. *"`tail.prev` is the LRU. Sentinels make this clean — no `if (tail == null)` checks."*
-
-3. *"Eviction does BOTH: remove from the DLL AND remove from the HashMap. Both structures must agree at all times. Single source of truth: the Node — once it's gone from both, it's gone."*
+3. *"Eviction does BOTH: remove from the DLL AND remove from the HashMap. Both structures must agree at all times — the Node is the single link between them."*
 
 ### 4.3 The three DLL helpers — four lines each
 
@@ -321,33 +309,28 @@ private void moveToHead(Node<K, V> node) {
 
 > **Senior callout:** *"`moveToHead` is just remove + addToHead. Don't write it as 4 inline pointer reassignments — that's where off-by-one bugs live. Compose two correct primitives."*
 
-### 4.4 Verification — dry-run eviction + refresh
+### 4.4 Dry-run — eviction + refresh (say this at the board)
 
 ```
 capacity = 3. Initial: empty list = head ⇄ tail. index = {}.
 
-put(a, 1):
-   not in index. size(0) < 3 → no evict. addToHead(a). index={a:Na}.
-   list: [head ⇄ a ⇄ tail]
-
-put(b, 2):  list: [head ⇄ b ⇄ a ⇄ tail],  index={a, b}
-put(c, 3):  list: [head ⇄ c ⇄ b ⇄ a ⇄ tail],  index={a, b, c}
+put(a, 1):  list: [head ⇄ a ⇄ tail]                index={a}
+put(b, 2):  list: [head ⇄ b ⇄ a ⇄ tail]            index={a, b}
+put(c, 3):  list: [head ⇄ c ⇄ b ⇄ a ⇄ tail]        index={a, b, c}
 
 get(a):
-   index.get(a) = Na. moveToHead(Na).
-   list: [head ⇄ a ⇄ c ⇄ b ⇄ tail]   ← a refreshed to MRU
+   moveToHead(a). list: [head ⇄ a ⇄ c ⇄ b ⇄ tail]   ← a refreshed to MRU
    return 1.
 
 put(d, 4):
-   not in index. size(3) == 3 → EVICT.
+   size(3) == 3 → EVICT.
    lru = tail.prev = b (NOT a, because a was just refreshed).
-   removeNode(b). index.remove(b).
-   index={a, c, d}.
+   removeNode(b). index.remove(b). index={a, c, d}.
    addToHead(d). list: [head ⇄ d ⇄ a ⇄ c ⇄ tail].
 
-get(b) → null  (correctly evicted)                                          ✓
-get(a) → 1     (was refreshed, not evicted)                                 ✓
-get(c) → 3     (was MRU until d arrived, now at tail.prev — but still in)  ✓
+get(b) → null  (correctly evicted)                                        ✓
+get(a) → 1     (was refreshed, not evicted)                                ✓
+get(c) → 3     (still in, at tail.prev now)                                ✓
 get(d) → 4                                                                  ✓
 size() = 3                                                                  ✓
 ```
@@ -372,108 +355,136 @@ public class LinkedHashMapLRUCache<K, V> implements Cache<K, V> {
 }
 ```
 
-> **Say this in the interview:** *"In production I'd reach for this LinkedHashMap version — it's 10 lines and uses the JDK's own LRU machinery. But the from-scratch version is what proves I understand the underlying composition. I'd write the from-scratch one in this interview and call out the LinkedHashMap option as a deliberate alternative."*
+> **Say this in the interview:** *"In production I'd reach for this — 10 lines, uses the JDK's own LRU machinery. But the from-scratch version is what proves I understand the composition underneath. I'd write the from-scratch one live and mention this as the deliberate production alternative."*
 
 ---
 
-## STEP 5 — Extensibility (~10 min)
+## Step 5 — Extensibility (~10 min)
 
-### 5.1 "Add TTL — entries expire after N seconds even without eviction"
+### E1. "Add TTL — entries expire after N seconds even without eviction"
 
-> **Problem in current design:** *"Stale entries hang around forever. A 1-hour-old cached price might no longer be accurate."*
->
-> **Pattern as the fix:** *"Each Node gets an `expiresAt: Instant`. On `get`, check expiration before returning — if expired, remove from BOTH the index and DLL, return null. Optionally a background sweeper periodically scans for expired entries to free memory faster than passive expiration."*
->
-> **Tradeoff:** *"Sweeper adds a thread; passive-only is simpler but lets expired entries linger until they're touched. Most production caches (Caffeine, Guava) do both."*
+**Problem:** Stale entries hang around forever. A 1-hour-old cached price might no longer be accurate.
 
-### 5.2 "Add LFU — least-FREQUENTLY-used eviction"
+**Fix:** Each Node gets an `expiresAt: Instant`. On `get`, check expiration before returning — if expired, remove from BOTH the index and DLL, return null. Optionally a background sweeper periodically scans for expired entries to free memory faster than passive expiration.
 
-> **Problem in current design:** *"LRU evicts based on recency. A page hit 100× yesterday but unused in the last hour gets evicted before a one-hit page touched 30 seconds ago. For some workloads, LFU is better."*
->
-> **Pattern as the fix:** *"Different impl, same Cache interface. LFU keeps `Map<frequency, LinkedHashSet<Node>>` plus a minFrequency counter. O(1) per operation but more state to maintain. Or use `W-TinyLFU` (Caffeine's algorithm) — a small LRU admission filter in front of an LFU main store."*
+**Tradeoff to name:** *"A sweeper adds a thread; passive-only is simpler but lets expired entries linger until touched. Most production caches (Caffeine, Guava) do both."*
 
-### 5.3 "Per-key locking instead of one global lock"
+### E2. "Add LFU — least-FREQUENTLY-used eviction"
 
-> **Problem in current design:** *"All operations serialize on the global lock. Reads from unrelated keys block each other."*
->
-> **Pattern as the fix:** *"Replace the synchronized methods with `ReentrantReadWriteLock` (read parallel, write exclusive) — modest win because get() still mutates DLL order. Better: `ConcurrentHashMap` for the index + `striped locks` for the DLL segments. Production caches use this. For interview scope, synchronized is the right starting point."*
+**Problem:** LRU evicts based on recency. A page hit 100× yesterday but unused in the last hour gets evicted before a one-hit page touched 30 seconds ago. For some workloads, LFU is better.
 
-### 5.4 Other "what-if" answers
+**Fix:** Different impl, same `Cache` interface. LFU keeps `Map<frequency, LinkedHashSet<Node>>` plus a `minFrequency` counter — O(1) per operation but more state to maintain. Or use `W-TinyLFU` (Caffeine's algorithm) — a small LRU admission filter in front of an LFU main store.
 
-| Follow-up                                  | Answer                                                                                              |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| "Resize capacity at runtime"               | Add `setCapacity(int)` — if shrinking, evict from tail until at new capacity.                       |
-| "Statistics — hit rate, miss count"        | Add `AtomicLong hits, misses` — update in `get`. Expose `stats()` method.                          |
-| "Bulk get / put"                           | Loop the existing methods inside ONE synchronized block (atomic batch). Or expose `getAll(Collection)`. |
-| "Persistence — survive restart"            | Snapshot index + DLL ordering to disk periodically; rebuild on startup. Or use a write-through cache. |
-| "Multi-tier (L1 in-process + L2 Redis)"    | Inject a backing `Cache` — on miss in L1, check L2; on hit, promote to L1. Same Cache interface.   |
-| "Make it lock-free"                        | Hard — DLL operations need atomic multi-pointer updates. Real lock-free caches use specialized structures (e.g., concurrent skiplists). Out of interview scope; mention as future work. |
+### E3. "Per-key locking instead of one global lock"
+
+**Problem:** All operations serialize on the global lock. Reads from unrelated keys block each other.
+
+**Fix:** `ReentrantReadWriteLock` gives only a modest win — `get()` still mutates DLL order, so it needs the write lock too. Better: `ConcurrentHashMap` for the index + striped locks for DLL segments — what production caches actually do.
+
+**Say aloud:** *"`get` is a writer here because it moves the node to head. That means even read-write locks help only marginally. For interview scope `synchronized` is correct; production reaches for Caffeine, which solves this for you."*
+
+### E4. Other one-liners
+
+| Follow-up | Answer |
+|-----------|--------|
+| "Resize capacity at runtime" | Add `setCapacity(int)` — if shrinking, evict from tail until at new capacity. |
+| "Statistics — hit rate, miss count" | `AtomicLong hits, misses` updated in `get`; expose a `stats()` method. |
+| "Bulk get / put" | Loop the existing methods inside ONE synchronized block (atomic batch). |
+| "Persistence — survive restart" | Snapshot index + DLL ordering to disk periodically; rebuild on startup. |
+| "Multi-tier (L1 in-process + L2 Redis)" | Inject a backing `Cache` — miss in L1 checks L2, promotes to L1 on hit. Same interface. |
+| "Make it lock-free" | Hard — DLL ops need atomic multi-pointer updates. Out of interview scope; name it as future work. |
 
 ---
 
-## Design Patterns — Hello Interview's canonical 8
+## Design patterns in play (name these out loud in the interview)
 
-> **No GoF pattern in the base.** This is a pure data-structure-composition problem — the senior signal is the HashMap+DLL design, not any named pattern.
+### In the BASE design
 
-**Reach for these on Step-5 follow-ups:**
+**No GoF pattern by name.** This is a pure data-structure-composition problem — the senior signal is the HashMap + DLL design, not a named pattern. Saying this explicitly is itself a signal: it shows you're not pattern-stuffing where none is warranted.
 
-| Follow-up                                  | Pattern (HI's 8)             | Your line                                                                                            |
-| ------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| "Different eviction policies"              | **Strategy (#1)** ⭐         | *"Promote eviction to an `EvictionPolicy` interface. LRU, LFU, TTL all implement it."*               |
-| "Cache-stat observers"                     | **Observer (#2)**            | *"Publish `onHit`/`onMiss`/`onEvict` events. Stats subscribers register independently."*            |
-| "Multi-tier cache"                         | **Decorator (#7)**           | *"`L2BackedCache(Cache l1, Cache l2)` wraps an L1 with L2 fallback. Stackable."*                    |
-| "Read-through to underlying store"         | **Decorator (#7)**           | *"`LoadingCache(Cache, Function<K,V> loader)` calls the loader on miss."*                          |
+| Principle | Where it lives | One-line justification |
+|-----------|----------------|------------------------|
+| **Composition over inheritance** | `LRUCache` composes a HashMap + a DLL | *"Extending HashMap would muddle lookup and ordering concerns. Composition keeps them separate."* |
+| **Information Expert** | `Node` stores its own `key` | *"Only the Node knows what to remove from the index on eviction — storing the key there avoids an O(N) scan."* |
+| **Interface Segregation** | `Cache<K,V>` — 4 narrow methods | *"No fat `getAll`/`stats`/`flush` mixed in — those are Step-5 extensions."* |
 
-**Patterns to refuse:**
+### Patterns for Step 5 extensibility
 
-- **Singleton on LRUCache** — caches are usually scoped to a service/component; DI a single instance.
+| Follow-up trigger | Pattern | The one-line move |
+|-------------------|---------|-------------------|
+| "Different eviction policies (LFU, TTL, ARC)" | **Strategy** ⭐ | *"Promote eviction to an `EvictionPolicy` interface, or just add sibling `Cache` implementations — LRU, LFU, TTL all satisfy the same contract."* |
+| "Cache-stat observers (hits/misses/evictions)" | **Observer** | *"Publish `onHit`/`onMiss`/`onEvict` events; stats subscribers register independently."* |
+| "Multi-tier cache (L1 + L2)" | **Decorator** | *"`L2BackedCache(Cache l1, Cache l2)` wraps an L1 with L2 fallback. Stackable."* |
+| "Read-through to underlying store" | **Decorator** | *"`LoadingCache(Cache, Function<K,V> loader)` calls the loader on miss."* |
+
+### Patterns to actively refuse
+
+- **Singleton on LRUCache** — caches are scoped to a service/component; DI a single instance.
 - **Builder for the 1-arg `LRUCache(capacity)` ctor** — academic noise.
+- **State pattern on Node** — a node has no per-state behavior; plain fields are correct.
 
-### One sentence to say at the end of Step 3
+### The rule to sound natural
 
-> *"The base design has no GoF pattern by name — the senior signal is the HashMap + doubly-linked-list composition. Patterns like Strategy and Decorator come in at Step 5 when eviction policies vary or when we add tiered caching."*
+1. **No pattern in the base is the correct answer here** — say so explicitly rather than forcing one in.
+2. **Strategy is the natural Step-5 answer** the moment a second eviction policy is mentioned.
+3. **Cap Step-5 patterns at 2** — usually Strategy (eviction) + Decorator (tiering) covers everything asked.
 
 ---
 
-## Interview deep-dives — the questions you'll definitely get asked
+## What is expected at each level
 
-### 1. Complexity (Big-O)
+### Junior (SDE-1)
+- Recognizes HashMap alone isn't enough (eviction is O(N)) with a nudge toward a linked list.
+- May write the DLL without sentinels, hitting null-check bugs on the empty-list and single-node edge cases.
+- Gets `get`/`put` happy-path working; may forget that `get` needs to mutate the DLL (treats it as a pure read).
+- Doesn't test the "recency refresh protects from eviction" case unprompted.
 
-| Operation                                | Time           | Space          | Notes                                                                              |
-| ---------------------------------------- | -------------- | -------------- | ---------------------------------------------------------------------------------- |
-| `get(key)`                                | **`O(1)`**     | O(1) per call  | HashMap lookup + moveToHead                                                        |
-| `put(key, value)` — existing              | **`O(1)`**     | O(1)           | HashMap lookup + moveToHead + value replace                                        |
-| `put(key, value)` — new, no evict         | **`O(1)`**     | O(1)           | HashMap put + addToHead                                                            |
-| `put(key, value)` — new, with evict       | **`O(1)`**     | O(1)           | All three: remove tail, map.remove(key), addToHead                                 |
-| `size()` / `clear()`                      | **`O(1)`** / `O(N)`             | O(1)           |                                                                                    |
-| Storage                                  | -              | **`O(capacity)`** | One Node per entry + 2 sentinels + HashMap overhead                              |
+### Mid-level (SDE-2) — the target
+- Reaches the HashMap + DLL composition unprompted, and explains why HashMap alone or DLL alone isn't sufficient.
+- Uses sentinel head/tail nodes from the start — no null-check branches in `addToHead`/`removeNode`.
+- Correctly makes `get` synchronized (recognizing it mutates DLL order, not just reads).
+- `put` on an existing key returns early after replacing the value — doesn't grow size or double-count.
+- Node stores its own key so eviction can clean the HashMap without a scan.
+- Runs the eviction + refresh dry-run out loud.
 
-> **Senior callout:** *"Every operation is O(1) — that's the WHOLE POINT. If any operation drops to O(N), the design is wrong. The HashMap gives O(1) lookup; the doubly-linked list gives O(1) pointer manipulation; neither could do this alone."*
+### Senior (SDE-3 / SDE-II)
+- Everything mid-level does, faster, with proactive tradeoffs.
+- Explicitly states "no GoF pattern in the base" rather than forcing Strategy in prematurely — and names exactly when Strategy would apply (second eviction policy).
+- Volunteers the `LinkedHashMap` production alternative unprompted, framing the from-scratch version as proof of understanding, not the production choice.
+- Catches the "`get` is a writer" subtlety when discussing concurrency — explains why `ReentrantReadWriteLock` only helps marginally here.
+- Discusses capacity=1 and capacity=0 edge cases without prompting.
+- Finishes early; uses buffer to discuss TTL/LFU and per-key locking as concrete Step-5 sketches.
 
-### 2. Concurrency / thread-safety
+---
 
-| Approach                                | When to use                                  | Cost                                                              |
-| --------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| **`synchronized` on every method** ⭐    | **Default.** Correct + simple                | Serializes all access — fine for single-app cache                 |
-| `ReentrantReadWriteLock`                | Read-heavy workloads                         | `get` still mutates DLL → still needs write lock; modest gain    |
-| `ConcurrentHashMap` + striped DLL locks | High contention                              | Complex; only after profiling shows synchronized is the bottleneck |
-| Lock-free (true CAS-based)              | Extreme throughput                           | Hard to get right; production caches like Caffeine don't even bother — they use sharding |
+## Interview deep-dives
 
-> **Senior callout:** *"`get` is a writer here because it moves the node to head. That means even read-write locks help only marginally. For interview scope `synchronized` is correct; for production reach for Caffeine which solves all of this for you."*
+### Complexity
 
-### 3. Testing — what to write tests for
+| Operation | Time | Notes |
+|-----------|------|-------|
+| `get(key)` | **O(1)** | HashMap lookup + moveToHead |
+| `put` — existing key | **O(1)** | HashMap lookup + moveToHead + value replace |
+| `put` — new key, no evict | **O(1)** | HashMap put + addToHead |
+| `put` — new key, with evict | **O(1)** | Remove tail + map.remove(key) + addToHead |
+| `size()` | **O(1)** | — |
+| `clear()` | **O(1)** amortized | Drops references; GC reclaims |
+| Storage | **O(capacity)** | One Node per entry + 2 sentinels + HashMap overhead |
 
-| Test category                | Cases to cover                                                                                              |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Basic put/get                | After put(a,1), get(a) returns 1                                                                            |
-| Get on missing               | get(x) returns null (no exception)                                                                          |
-| **Eviction at capacity**     | capacity=3, insert 4 keys → first is evicted                                                                |
-| **Recency refresh**          | put a/b/c, get a, put d → b is evicted (not a)                                                              |
-| Update existing              | put(a,1) then put(a,2) → size unchanged, value updated, a is MRU                                            |
-| Capacity 1 corner case       | put(a), put(b) → only b survives                                                                            |
-| Clear                        | put a/b/c, clear, get(a) → null, size==0                                                                    |
-| **Concurrent burst**         | 50 threads × 100 ops → capacity invariant holds; no NullPointerException; no corruption                    |
-| Capacity validation         | new LRUCache(0) or new LRUCache(-1) → IllegalArgumentException                                              |
+> **Senior callout:** *"Every operation is O(1) — that's the whole point. If any operation drops to O(N), the design is wrong. HashMap gives O(1) lookup; the doubly-linked list gives O(1) pointer manipulation; neither alone can do this."*
+
+### Concurrency
+
+| Approach | When | Cost |
+|----------|------|------|
+| `synchronized` on every method ⭐ | **Default.** Correct + simple. | Serializes all access — fine for a single-app cache. |
+| `ReentrantReadWriteLock` | Read-heavy workloads | `get` still mutates DLL → still needs the write lock; modest gain. |
+| `ConcurrentHashMap` + striped DLL locks | High contention | Complex; only after profiling shows `synchronized` is the bottleneck. |
+| Lock-free (CAS-based) | Extreme throughput | Hard to get right; production caches like Caffeine use sharding instead. |
+
+> **Senior callout:** *"`get` is a writer here because it moves the node to head. That's why even read-write locks help only marginally — for interview scope `synchronized` is correct."*
+
+### The recency-refresh test (mention this)
 
 ```java
 @Test
@@ -483,67 +494,46 @@ void get_refreshes_recency_protecting_from_eviction() {
     c.get("a");                  // a is now MRU
     c.put("d", 4);               // b should be evicted (it's the new LRU)
     assertEquals(1,    c.get("a"));
-    assertNull       (c.get("b"));    // evicted
+    assertNull        (c.get("b"));    // evicted
     assertEquals(3,    c.get("c"));
     assertEquals(4,    c.get("d"));
 }
 ```
 
-### 4. SOLID mapping
-
-| Letter                       | Where it shows up                                                                                          |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **S** Single Responsibility  | LRUCache = LRU implementation. Cache interface = contract. Node = DLL element. Three reasons to change. |
-| **O** Open/Closed            | Adding LFU / TTL = new class implementing Cache. LRUCache unchanged. Eviction policy as a Strategy is one refactor away. |
-| **L** Liskov Substitution    | Both LRUCache and LinkedHashMapLRUCache substitute behind the Cache interface — same get/put semantics.   |
-| **I** Interface Segregation  | Cache has 4 narrow methods. No fat `getAll`/`stats`/`flush` mixed in — those are extensions.              |
-| **D** Dependency Inversion   | Application code depends on Cache, not LRUCache. Test doubles substitute trivially (e.g., NoOpCache).     |
-
-### 5. "Summarize your design in 30 seconds"
-
-> *"Generic `Cache<K, V>` interface with one production impl: `LRUCache`. The headline is the data structure composition — HashMap<K, Node> for O(1) lookup, doubly-linked list with sentinel head/tail for O(1) move-to-head and remove-tail. Each Node lives in BOTH structures simultaneously, which is what makes every operation O(1). `get` is a mutator — moves the node to head — so the cache synchronizes get AND put. `put` has three branches: update existing (no size change), new key under capacity (just add), or new key at capacity (evict tail.prev first). The Node stores its KEY so eviction can also clean the HashMap in O(1). For production, I'd mention Java's `LinkedHashMap` with `accessOrder=true` as a 10-line equivalent — the from-scratch version proves I understand what's inside. Extensions: TTL via `expiresAt` on each node, LFU as a separate implementation, ReadWriteLock or striped locking for higher concurrency."*
-
-That's ~50 seconds. Hits: the composition, O(1) for everything, sentinel pattern, why Node stores the key, LinkedHashMap as the production alternative.
+*"This is the most common interviewer trap — testing that recency refresh actually protects an entry from eviction, not just that eviction happens."*
 
 ---
 
-## Closing soundbites (memorize these)
+## 30-second summary (memorize for closing)
 
-- **Opening:** *"LRU is small in scope but the senior signal is sharp — get the data structures right and the rest follows."*
-- **Why HashMap + DLL:** *"HashMap gives O(1) lookup; DLL gives O(1) pointer manipulation. Together = O(1) on EVERY operation."*
-- **Why sentinel head/tail:** *"Eliminates every null check in DLL ops. Add/remove is the same 4 lines for empty list, full list, or anything in between."*
-- **Why Node stores the key:** *"On eviction we have only the Node (tail.prev). To also remove from the index, we need its key. Without storing it, eviction becomes O(N)."*
-- **Why `get` is synchronized:** *"`get` is a MUTATOR — it moves the node to head. Concurrent gets can corrupt the DLL pointers; one synchronized block keeps it consistent."*
-- **Production alternative:** *"Java's `LinkedHashMap` with `accessOrder=true` is a 10-line LRU. I'd mention this in interview to show I know both, then implement from scratch to prove I understand what's inside."*
-- **On extensibility:** *"TTL adds `expiresAt` per Node. LFU is a new Cache impl with frequency buckets. Multi-tier is a Decorator. Eviction policy as a Strategy if multiple are needed."*
+> *"Generic `Cache<K, V>` interface with one production impl, `LRUCache`. The headline is data structure composition — `HashMap<K, Node>` for O(1) lookup, doubly-linked list with sentinel head/tail for O(1) move-to-head and remove-tail. Each Node lives in BOTH structures simultaneously, which is what makes every operation O(1). `get` is a mutator — it moves the node to head — so both `get` and `put` are synchronized. `put` has three branches: update existing (no size change, early return), new key under capacity (just add), new key at capacity (evict `tail.prev` first). The Node stores its own key so eviction can also clean the HashMap in O(1) — otherwise you'd need an O(N) scan. No GoF pattern in the base — this is pure composition. For production I'd mention Java's `LinkedHashMap` with `accessOrder=true` as a 10-line equivalent; the from-scratch version proves I understand what's inside. Extensions: TTL via `expiresAt` on each node, LFU as a sibling implementation, striped locking for higher concurrency."*
 
 ---
 
 ## Top mistakes that lose points
 
 - **Storing only the VALUE on the Node, not the key** — eviction becomes O(N) because you have to scan the HashMap to find which key maps to the evicted node.
-- **No sentinels** — every add/remove needs null checks for "is this the head?" / "is this the tail?". 30 minutes of off-by-one bugs.
-- **`get` not synchronized** — `get` mutates the DLL (moveToHead); concurrent gets corrupt pointers.
-- **`put(existing key)` growing the size** — forgetting the early return after replacing value. Causes spurious evictions on update.
-- **Using ArrayList instead of DLL** — move-to-head and remove become O(N). Linear scans destroy the O(1) guarantee.
-- **Confusing `head` (MRU) and `tail` (LRU)** — pick a convention at the start of the room and stick to it.
-- **No bound check on capacity in the constructor** — `LRUCache(0)` or `LRUCache(-1)` becomes a bug-magnet later.
-- **Not testing the recency refresh** — the eviction-after-get test is the most common interviewer trap.
-- **Implementing LinkedHashMap version WITHOUT the from-scratch version** — interviewer wants to see you understand the internals, not just the JDK shortcut.
+- **No sentinels** — every add/remove needs null checks for "is this the head?" / "is this the tail?". Off-by-one bugs follow.
+- **`get` not synchronized** — `get` mutates the DLL (`moveToHead`); concurrent gets corrupt pointers.
+- **`put(existing key)` growing the size** — forgetting the early return after replacing the value. Causes spurious evictions on update.
+- **Using ArrayList instead of a DLL** — move-to-head and remove become O(N), destroying the O(1) guarantee.
+- **Confusing `head` (MRU) and `tail` (LRU)** — pick a convention at the start and stick to it.
+- **No bound check on capacity** — `LRUCache(0)` or `LRUCache(-1)` becomes a bug magnet later.
+- **Not testing recency refresh** — the eviction-after-get test is the most common interviewer trap.
+- **Showing only the LinkedHashMap version** — the interviewer wants to see you understand the internals, not just the JDK shortcut.
 
 ---
 
-## Files in this folder (your reference implementation)
+## Files in this folder
 
-| File                                       | What it shows                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `Cache.java`                               | Generic interface — get / put / size / clear                                             |
-| `LRUCache.java`                            | **The hot class** — HashMap + DLL composition + sentinel head/tail                       |
-| `LinkedHashMapLRUCache.java`               | 10-line "production-clean" variant using JDK's LinkedHashMap + accessOrder               |
-| `LRUCacheDriver.java`                      | 6 scenarios — basic / eviction / recency-refresh / update-no-grow / both-impls-agree / **50-thread concurrent burst** |
+| File | Purpose |
+|------|---------|
+| `Cache.java` | Generic interface — get / put / size / clear |
+| `LRUCache.java` | **The hot class** — HashMap + DLL composition + sentinel head/tail |
+| `LinkedHashMapLRUCache.java` | 10-line "production-clean" variant using JDK's LinkedHashMap + accessOrder |
+| `LRUCacheDriver.java` | 6 scenarios — basic / eviction / recency-refresh / update-no-grow / both-impls-agree / 50-thread concurrent burst |
 
-Run from the project root:
-
+Run:
 ```bash
 mvn -q compile exec:java \
   -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.lrucache.LRUCacheDriver

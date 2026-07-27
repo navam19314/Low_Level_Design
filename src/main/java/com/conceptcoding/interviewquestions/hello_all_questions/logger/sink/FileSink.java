@@ -8,15 +8,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
-/**
- * Append-mode file sink. Open the file once in the constructor (open syscall is
- * expensive) and keep the handle. Flush after every write so recent log lines
- * are visible if the process crashes — the default "flush on close" is exactly
- * the wrong moment for a logger.
- *
- * <p>Implements AutoCloseable so a {@code try-with-resources} or shutdown hook
- * closes the underlying writer cleanly.
- */
+// Append-mode file sink. Open the file once in the constructor (open syscall is
+// expensive) and keep the handle. Flush after every write so recent log lines
+// are visible if the process crashes — the default "flush on close" is exactly
+// the wrong moment for a logger.
+//
+// Implements AutoCloseable so a try-with-resources or shutdown hook closes the
+// underlying writer cleanly.
 public class FileSink implements Sink, AutoCloseable {
 
     private final BufferedWriter writer;
@@ -37,7 +35,7 @@ public class FileSink implements Sink, AutoCloseable {
             writer.flush();                // visible before any process crash
         } catch (IOException e) {
             // Wrap as unchecked so Sink interface stays simple. Destination
-            // catches Throwable and isolates the failure.
+            // catches Exception and isolates the failure.
             throw new UncheckedIOException("FileSink write failed: " + filePath, e);
         }
     }

@@ -5,7 +5,6 @@ import com.conceptcoding.interviewquestions.hello_all_questions.logger.formatter
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.LogLevel;
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.sink.Sink;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -106,7 +105,7 @@ public class LoggerDriver {
     static final class CapturingSink implements Sink {
         private static final Pattern WELL_FORMED = Pattern.compile(
                 "^\\{\"timestamp\":\"[^\"]+\",\"level\":\"[A-Z]+\",\"thread\":\"[^\"]+\",\"message\":\"[^\"]+\"\\}$");
-        private final List<String> entries = Collections.synchronizedList(new CopyOnWriteArrayList<>());
+        private final List<String> entries = new CopyOnWriteArrayList<>();   // already thread-safe
 
         @Override public void write(String formatted) { entries.add(formatted); }
 

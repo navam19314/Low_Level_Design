@@ -2,7 +2,7 @@ package com.conceptcoding.interviewquestions.hello_all_questions.logger.formatte
 
 import com.conceptcoding.interviewquestions.hello_all_questions.logger.model.LogRecord;
 
-/** Default human-readable format: {@code 2026-05-06T10:00:00Z [INFO] [main] message text} */
+// Default human-readable format: 2026-05-06T10:00:00Z [INFO] [main] message text
 public class PlainTextFormatter implements Formatter {
 
     @Override
