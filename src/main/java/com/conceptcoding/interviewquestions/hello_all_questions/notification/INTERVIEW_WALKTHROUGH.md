@@ -6,6 +6,72 @@
 
 ---
 
+## Part 0 — Understand it from scratch (read this first if you're rusty)
+
+*Plain-English intuition. Skip if the design is fresh; come back when it isn't.*
+
+### What is this about?
+
+When an app (Swiggy, Amazon, your bank) needs to tell you something — "order shipped", "suspicious login" — it reaches you through different **channels**: email, SMS, push, Slack. The Notification System is the piece whose whole job is: *"take one message and deliver it to a person through whatever channels they've chosen."*
+
+### Why is it tricky? (why not just "send email"?)
+
+1. **Each channel works completely differently** — email = talk to a mail server (SMTP), SMS = call Twilio's API, push = call Google's FCM. Nothing in common in *how* they work — but to the app they're all just "deliver this."
+2. **Users pick what they want** — I want orders by SMS+push, marketing only by email. Per-user preferences.
+3. **One channel will fail** — Twilio has an outage. When SMS fails, email + push **must still go out**. One broken channel can't sink the others.
+
+### What the developer types
+
+```java
+service.send(notification);   // one message in → fans out to the user's channels → returns a per-channel report
+```
+
+### The 6 components, each solving ONE need
+
+| Component | Layman meaning | Answers |
+|-----------|----------------|---------|
+| **Notification** | the message (who + subject + body) | "what am I telling them?" |
+| **NotificationChannel** | a way to reach someone (EMAIL/SMS/PUSH) | "which pipe?" |
+| **NotificationSender** | the delivery logic for ONE channel (EmailSender talks to the mail server, SmsSender calls Twilio) | "how do I deliver via this pipe?" |
+| **preferences** | which channels each user wants (unset → all channels) | "which pipes for this person?" |
+| **DeliveryResult** | per-channel outcome (SENT / FAILED + error) | "what worked, what didn't?" |
+| **NotificationService** | the front door you call; holds senders + preferences, fans out | "the thing developers use" |
+
+> **The key move — one Sender per channel behind a common interface.** The service never knows *how* email vs SMS works; it just says "Sender, deliver this." Adding WhatsApp later = write one new `WhatsAppSender`, change nothing else. That's the Strategy pattern.
+
+### See it work — with the failure twist
+
+```
+              service.send(notification for user-42)
+                          │
+          preferences[user-42] = { EMAIL, SMS, PUSH }
+                          │
+        ┌─────────────────┼──────────────────┐
+        v                 v                   v
+   EmailSender        SmsSender           PushSender
+   → success          → THROWS "down!"    → success
+   → SENT             │ caught inside     → SENT
+                      v
+              DeliveryResult(SMS, FAILED, "down!")
+
+   Returns: [ (EMAIL, SENT), (SMS, FAILED), (PUSH, SENT) ]
+```
+
+**The SMS explosion is caught → turned into a FAILED result → does NOT crash email/push or the caller.** Two of three still delivered; caller gets a truthful report. *That "one bad channel can't take down the others" is the whole senior signal.*
+
+### Same shape as the Logger problem
+
+One input → fan out to N independent handlers → each can fail without dragging down the rest:
+
+| Logger | Notification |
+|--------|-------------|
+| `LogRecord` (the entry) | `Notification` (the message) |
+| `Sink` (write to console/file) | `NotificationSender` (deliver via email/SMS) |
+| `Logger` fans out to Destinations | `NotificationService` fans out to channels |
+| failing sink → caught, others still write | failing sender → caught, others still deliver |
+
+---
+
 ## Time budget
 
 | Step | Activity | Budget | Cumulative |
