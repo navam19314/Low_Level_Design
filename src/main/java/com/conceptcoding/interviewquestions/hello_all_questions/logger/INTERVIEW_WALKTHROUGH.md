@@ -6,6 +6,144 @@
 
 ---
 
+## Part 0 — Understand it from scratch (read this first if you're rusty)
+
+*This section is plain-English intuition. Skip it if the design is already fresh; come back to it when it isn't.*
+
+### What is "logging"?
+
+When a program runs, you can't see what it's doing inside. So developers scatter little "print" statements to leave a trail of breadcrumbs:
+
+```java
+System.out.println("User logged in");
+System.out.println("Payment failed!");
+```
+
+When something breaks at 3am, you read these breadcrumbs to figure out *what happened and when*. **Logging is a diary your program writes about itself.**
+
+### Why not just use `println` everywhere?
+
+Because real apps need more than "print to screen":
+
+1. **Importance levels** — a routine "user logged in" is not as urgent as "database on fire!". You want to say "only show me the serious stuff."
+2. **Multiple places to write** — print to the screen AND save to a file AND (later) send to a monitoring server.
+3. **Different shapes** — a human reading the console wants `[WARN] disk low`; a monitoring tool wants machine-readable `{"level":"WARN"}`.
+
+`println` can't do any of this. So we design a proper **Logger** — a small system that handles it all. That's this LLD exercise.
+
+### What the developer actually types
+
+As the person *using* the logger, you want dead-simple one-liners:
+
+```java
+logger.info("User logged in");
+logger.warn("Disk almost full");
+logger.error("Payment failed");
+```
+
+`info`/`warn`/`error` = the importance level. The string = the message. **Everything else — where it goes, how it's shaped, what gets filtered — you set up ONCE at startup and never think about again.**
+
+### The 6 components, each solving ONE need
+
+Introduced in the order the story needs them:
+
+**1. `LogLevel` — "how serious is this?"**
+A fixed ranking, cheapest to scariest. Lets you later say "ignore anything below WARN."
+```
+DEBUG  →  INFO  →  WARN  →  ERROR  →  FATAL
+(chatty)                             (catastrophic)
+```
+
+**2. `LogRecord` — "one diary entry"**
+When you call `logger.warn("disk low")`, the system bundles everything about that one call into a box:
+```
+LogRecord = { message: "disk low", level: WARN, time: 10:00:00, thread: "main" }
+```
+Instead of passing 4 loose values around, wrap them in one object. One log call = one LogRecord.
+
+**3. `Formatter` — "HOW should the entry look?"**
+A LogRecord is raw data; we turn it into a string. But two readers want two shapes:
+- Human (console):  `2026-07-27 10:00 [WARN] [main] disk low`
+- Machine (monitoring tool):  `{"time":"...","level":"WARN","message":"disk low"}`
+
+A **Formatter**'s only job is "turn a LogRecord into a string." Versions: `PlainTextFormatter`, `JsonFormatter`.
+
+**4. `Sink` — "WHERE do the characters physically go?"**
+Now we have a finished string. Where do the actual bytes land — screen? file? remote server? A **Sink** (like a kitchen sink — stuff flows into it and away) has one job: "take this finished string and physically write it." Versions: `ConsoleSink` (screen), `FileSink` (a file).
+
+> **Why keep Formatter and Sink separate?** "How it looks" and "where it goes" are *independent* choices. You might want JSON-to-file AND JSON-to-screen AND plaintext-to-file. If you glued format and destination together, you'd need a class for every combination (JsonFile, JsonConsole, PlainFile, PlainConsole… it explodes). Keeping them separate lets you mix-and-match freely. **This is the whole point of the problem** (see M2).
+
+**5. `Destination` — "one complete output pipe"**
+A single "output" is really THREE decisions bundled together:
+- What's my minimum importance? (a threshold, e.g. WARN)
+- How should it look? (a Formatter)
+- Where does it go? (a Sink)
+
+A **Destination** bundles those three. It's one fully-configured pipe:
+```
+Destination A = { threshold: DEBUG, format: PlainText, sink: Console }
+   → "print EVERYTHING to the screen, human-readable"
+Destination B = { threshold: WARN,  format: Json,      sink: File }
+   → "save only WARN-and-above to a file, as JSON"
+```
+When a log entry arrives, a Destination does 3 steps: **filter** (important enough? if not, drop it) → **format** (shape it) → **write** (hand to its Sink).
+
+**6. `Logger` — "the front door you call"**
+The only class the developer touches. It holds a list of Destinations. When you call `logger.warn(...)`, the Logger builds one LogRecord and hands that same record to EVERY Destination — each one independently decides whether/how/where to write it.
+
+### See it all work together
+
+**Setup (once, at startup):**
+```java
+Destination screen = new Destination(PlainText, DEBUG, Console);   // everything → screen
+Destination file   = new Destination(Json,      WARN,  File);      // warnings+ as JSON → file
+Logger logger = new Logger(List.of(screen, file));
+```
+
+**Anywhere in your app:**
+```java
+logger.warn("disk space low");
+```
+
+**What happens inside:**
+```
+                logger.warn("disk space low")
+                          │
+                          v
+          LogRecord{ WARN, "disk space low", 10:00, main }
+                          │
+        ┌─────────────────┴─────────────────┐
+        v                                    v
+   Destination "screen"                Destination "file"
+   1. WARN >= DEBUG? yes ✓             1. WARN >= WARN? yes ✓
+   2. PlainText -> "10:00 [WARN] ..."  2. Json -> {"level":"WARN",...}
+   3. Console -> prints to screen      3. File -> appends to app.log
+```
+Result: **the screen shows readable text, the file gets JSON — from one single log call.**
+
+And if you'd called `logger.debug("tiny detail")` instead:
+- `screen`: DEBUG >= DEBUG? yes → prints it.
+- `file`:   DEBUG >= WARN? **no** → silently dropped. Nothing written.
+
+Same call, but each Destination's own threshold decides its fate.
+
+### One-line summary of each piece
+
+| Piece | Layman meaning | Answers |
+|-------|----------------|---------|
+| **LogLevel** | importance ranking | "how serious is this?" |
+| **LogRecord** | one diary entry (message + when + level + who) | "what happened?" |
+| **Formatter** | the styling | "how should it *look*?" |
+| **Sink** | the physical writer | "*where* do the bytes go?" |
+| **Destination** | one complete pipe (threshold + Formatter + Sink) | "one full output setup" |
+| **Logger** | the front door you call | "the thing developers use" |
+
+### The senior reason it's designed this way
+
+The whole design answers one question elegantly: *"How do I support ANY format going to ANY place, without a class explosion?"* By splitting **Formatter** (how) from **Sink** (where), and letting **Destination** freely combine any Formatter with any Sink, you get infinite combinations from a handful of small single-purpose classes. New format = one new Formatter. New place = one new Sink. Everything else keeps working untouched.
+
+---
+
 ## Time budget
 
 | Step | Activity | Budget | Cumulative |
