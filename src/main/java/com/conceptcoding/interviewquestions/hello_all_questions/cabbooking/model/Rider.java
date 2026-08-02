@@ -2,7 +2,7 @@ package com.conceptcoding.interviewquestions.hello_all_questions.cabbooking.mode
 
 import java.util.Objects;
 
-/** A rider — identity. Location is supplied per request (pickup point). */
+// A rider — identity. Location is supplied per request (pickup point).
 public class Rider {
     private final String id;
     private final String name;

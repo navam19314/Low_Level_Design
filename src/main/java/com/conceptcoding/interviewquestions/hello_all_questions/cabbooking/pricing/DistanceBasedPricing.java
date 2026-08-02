@@ -2,29 +2,27 @@ package com.conceptcoding.interviewquestions.hello_all_questions.cabbooking.pric
 
 import com.conceptcoding.interviewquestions.hello_all_questions.cabbooking.model.Location;
 
-/**
- * Fare = baseFare + (distanceKm × perKmCents), then apply surge multiplier.
- *
- * <p>Math done in {@code long} throughout. Distance is the only double in
- * the chain and gets multiplied by an int (cents-per-km) — we round to the
- * nearest cent at the end via Math.round.
- */
+// Fare = baseFare + (distanceKm × perKm), then apply surge multiplier. Amounts in rupees.
+//
+// Math done in long throughout. Distance is the only double in the chain
+// and gets multiplied by an int (rupees-per-km) — we round to the nearest
+// rupee at the end via Math.round.
 public class DistanceBasedPricing implements PricingStrategy {
 
-    private final long baseFareCents;
-    private final long perKmCents;
+    private final long baseFare;   // rupees
+    private final long perKm;      // rupees per km
 
-    public DistanceBasedPricing(long baseFareCents, long perKmCents) {
-        this.baseFareCents = baseFareCents;
-        this.perKmCents    = perKmCents;
+    public DistanceBasedPricing(long baseFare, long perKm) {
+        this.baseFare = baseFare;
+        this.perKm    = perKm;
     }
 
     @Override
-    public long calculateFareCents(Location src, Location dst, int surgeMultiplierBasisPoints) {
+    public long calculateFare(Location src, Location dst, int surgeMultiplierBasisPoints) {
         double km            = src.distanceKm(dst);
-        long   distanceCents = Math.round(km * perKmCents);
-        long   subtotalCents = baseFareCents + distanceCents;
+        long   distanceFare  = Math.round(km * perKm);
+        long   subtotal      = baseFare + distanceFare;
         // Apply surge: subtotal * (basisPoints / 10_000)
-        return Math.round(subtotalCents * (surgeMultiplierBasisPoints / 10_000.0));
+        return Math.round(subtotal * (surgeMultiplierBasisPoints / 10_000.0));
     }
 }

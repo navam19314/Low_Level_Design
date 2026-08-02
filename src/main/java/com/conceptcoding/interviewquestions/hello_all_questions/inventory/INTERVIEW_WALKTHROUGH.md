@@ -9,6 +9,32 @@
 
 ---
 
+## Part 0 — Understand it from scratch (read this first if you're rusty)
+
+*Skip if the design is already fresh; come back to it when it isn't.*
+
+**The real-world picture.** A company has a few warehouses — EAST, WEST, NORTH — each holding shelves of products. Trucks arrive (add stock), orders ship (remove stock), someone asks "which warehouse has 25+ widgets?", someone wants stock moved between warehouses, and someone wants a heads-up when a warehouse runs low. All of this happens from many places at once, so the code also has to not corrupt itself when two things happen simultaneously.
+
+**The four pieces:**
+- **InventoryManager** — the front-desk receptionist. You never talk to a warehouse directly; you tell her "move 10 widgets EAST→WEST" and she calls the right people.
+- **Warehouse** — one storage room. Knows its own stock, has its own lock on its own door, knows who to notify if something runs low.
+- **AlertConfig** — a sticky note on a shelf: *"tell Bob if WIDGET drops below 10."*
+- **AlertListener** — Bob (or an email system, or a Slack bot) — whoever actually gets notified. The warehouse doesn't care who or how; it just makes the call.
+
+**Three tricky parts, explained plainly:**
+
+1. **Alerts fire on "just crossed low," not "currently low."** Like a phone's low-battery notice: you're told once, right when it drops below 10 — not every time you glance at it while it stays below 10. If it recovers above 10 and drops again later, you get told again. One simple check — "was it at-or-above before, and is it below now?" — gives fire-once, no-spam, and auto-reset for free.
+
+2. **Step out of the office before making the phone call.** Updating the shelf count happens with the door briefly locked. But the warehouse unlocks the door *before* calling Bob. If it kept the door locked while dialing, and Bob doesn't pick up, the whole warehouse freezes for no reason. Quick things happen under lock; slow, unpredictable things (notifying someone) happen after the lock is released.
+
+3. **Moving stock between two rooms without everyone getting stuck.** If Person A grabs EAST's door (heading to WEST) at the same moment Person B grabs WEST's door (heading to EAST), each ends up waiting forever for the other to let go — a deadlock. The fix: everyone must always grab doors in the same agreed order (say, alphabetical) — whoever gets there first just finishes and moves on; nobody's ever caught holding one door while wanting another that's held the same way in reverse.
+
+**A typical sequence:** truck arrives at EAST (add 50) → set an alert on EAST ("tell Bob below 10") → orders ship, stock drops from 15 to 9 → alert fires once → someone asks "who has 25+?" → receptionist checks each warehouse and reports back → 20 units moved EAST→WEST while 5 move WEST→EAST at the same instant → both grab doors in the same order, neither gets stuck → if EAST only has 2 units and someone asks to remove or transfer 10, the answer is "no," and nothing changes.
+
+That maps directly onto `addStock`, `removeStock`, `getWarehousesWithAvailability`, `transfer`, and `setLowStockAlert` on `InventoryManager` — the receptionist fielding all of it, handing the real work to the right `Warehouse`.
+
+---
+
 ## Time budget (45 min)
 
 | Step | Activity                                                                                      | Budget   | Cumulative |
@@ -306,14 +332,24 @@ public class Warehouse {
 }
 ```
 
-### AlertConfig — immutable record
+### AlertConfig — immutable value class
 
 ```java
-public record AlertConfig(int threshold, AlertListener listener) {
-    public AlertConfig {
+// Normal class, not a record — deck convention (whiteboard-friendly; some
+// interviewers frown on records). Immutability kept by hand: final fields,
+// validated in the ctor, no setters.
+public class AlertConfig {
+    private final int threshold;
+    private final AlertListener listener;
+
+    public AlertConfig(int threshold, AlertListener listener) {
         if (threshold <= 0) throw new IllegalArgumentException("threshold must be > 0");
-        Objects.requireNonNull(listener);
+        this.threshold = threshold;
+        this.listener  = Objects.requireNonNull(listener);
     }
+
+    public int           threshold() { return threshold; }
+    public AlertListener listener()  { return listener; }
 }
 ```
 
@@ -345,7 +381,7 @@ public interface AlertListener {
                                         +-------------------------------------+
 
 +-----------------------------+   +---------------------------------------+
-|  AlertConfig (record)       |   |  <<interface>> AlertListener          |
+|  AlertConfig (immutable)    |   |  <<interface>> AlertListener          |
 +-----------------------------+   +---------------------------------------+
 | int           threshold     |   | + onLowStock(warehouseId, productId,  |
 | AlertListener listener      |   |              currentQty)              |
@@ -677,7 +713,7 @@ public boolean completeTransfer(String transferId) {
 - **Facade (#8)** — `InventoryManager` is the only class application code touches.
 - **Information Expert** (GRASP principle) — per-warehouse state lives on each Warehouse.
 - **Tell, Don't Ask** (principle) — InventoryManager calls `warehouse.addStock(...)`; never reaches into the inventory map.
-- **Immutability** (principle) — `AlertConfig` is a record. The warehouses map is immutable post-ctor.
+- **Immutability** (principle) — `AlertConfig` is an immutable class (final fields, validated in ctor, no setters). The warehouses map is immutable post-ctor.
 
 > **Why no Strategy in base?** The one-sentence test fails: there's no algorithmic variation in the problem. Pricing isn't a thing, allocation rules aren't a thing, the alert math is fixed (threshold crossing). Save Strategy for §5 if "different alert delivery semantics" or "different allocation policies" come up.
 
@@ -817,6 +853,7 @@ That's ~60 seconds. Hits: structure, the Observer + lock-ordering choices, the t
 
 - **No `synchronized` on the warehouse mutators** — concurrent removes can both pass `prev >= quantity` and both decrement; inventory goes negative.
 - **Firing listeners INSIDE the synchronized block** — a slow listener holds the warehouse lock; a listener calling back into the warehouse deadlocks (non-reentrant) or surprises (reentrant).
+- **`catch (Throwable)` around the listener call** — isolating a misbehaving listener is right, but catching `Throwable` swallows JVM `Error`s (OutOfMemory, StackOverflow) inside a business-logic loop. Catch `Exception`, not `Throwable`.
 - **No lock ordering in `transfer`** — guaranteed deadlock under bidirectional concurrent transfers.
 - **Mutating BEFORE the negative-stock check in `removeStock`** — partial state change on failure. Always validate first, mutate after.
 - **Using "currently below" instead of CROSSING for alerts** — duplicate fires on every removal while below the threshold; spam.
@@ -834,7 +871,7 @@ That's ~60 seconds. Hits: structure, the Observer + lock-ordering choices, the t
 | File                                              | What it shows                                                                            |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `model/AlertListener.java`                        | Observer interface — `onLowStock(warehouseId, productId, currentQty)`                    |
-| `model/AlertConfig.java`                          | Immutable record pairing threshold + listener                                            |
+| `model/AlertConfig.java`                          | Immutable value class pairing threshold + listener (final fields, ctor-validated)        |
 | `Warehouse.java`                                  | **The hot class** — per-warehouse `synchronized(this)`, threshold-CROSSING check, **fire-outside-lock** pattern, isolated listener exceptions |
 | `InventoryManager.java`                           | Orchestrator + facade — ordered-lock transfer, cross-warehouse queries                   |
 | `InventoryManagerDriver.java`                     | 5 scenarios — basics / alert crossing / negative rejection / **50-thread concurrent remove** / **100-thread bidirectional A↔B transfer (deadlock test)** |

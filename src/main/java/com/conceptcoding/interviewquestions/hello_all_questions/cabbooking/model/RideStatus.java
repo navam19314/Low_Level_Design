@@ -5,22 +5,18 @@ import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Ride lifecycle — encoded as a small state machine with explicit allowed
- * transitions. {@link #canTransitionTo(RideStatus)} is what {@link Ride}
- * consults before mutating its own state — invalid transitions throw.
- *
- * <pre>
- *   REQUESTED ──match──► MATCHED ──start──► IN_PROGRESS ──complete──► COMPLETED
- *       │                   │
- *       └──cancel──┬────────┴──cancel──► CANCELLED
- * </pre>
- *
- * <p>We chose the enum-state-machine here (not the class-per-state GoF State
- * pattern) — most transitions are 1-line bookkeeping, no per-state behavior
- * worth its own class. Compare with VendingMachine, where each state has
- * distinct dispense/insert behavior and earns its own class.
- */
+// Ride lifecycle — encoded as a small state machine with explicit allowed
+// transitions. canTransitionTo(RideStatus) is what Ride consults before
+// mutating its own state — invalid transitions throw.
+//
+//   REQUESTED ──match──► MATCHED ──start──► IN_PROGRESS ──complete──► COMPLETED
+//       │                   │
+//       └──cancel──┬────────┴──cancel──► CANCELLED
+//
+// We chose the enum-state-machine here (not the class-per-state GoF State
+// pattern) — most transitions are 1-line bookkeeping, no per-state behavior
+// worth its own class. Compare with VendingMachine, where each state has
+// distinct dispense/insert behavior and earns its own class.
 public enum RideStatus {
     REQUESTED, MATCHED, IN_PROGRESS, COMPLETED, CANCELLED;
 

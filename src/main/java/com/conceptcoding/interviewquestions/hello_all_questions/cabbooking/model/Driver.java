@@ -2,17 +2,15 @@ package com.conceptcoding.interviewquestions.hello_all_questions.cabbooking.mode
 
 import java.util.Objects;
 
-/**
- * A driver — identity, current location, status, rating.
- *
- * <p>The {@code status} field is the contended one (race between concurrent
- * match attempts). Access is gated via {@link #tryReserve()} which performs
- * the atomic AVAILABLE → ON_TRIP transition under {@code synchronized(this)}.
- *
- * <p>Location is a mutable field — drivers move as they drive. In production
- * we'd push location updates through a stream + re-index in the spatial
- * index; here we just call {@link #updateLocation(Location)}.
- */
+// A driver — identity, current location, status, rating.
+//
+// The status field is the contended one (race between concurrent match
+// attempts). Access is gated via tryReserve() which performs the atomic
+// AVAILABLE → ON_TRIP transition under synchronized(this).
+//
+// Location is a mutable field — drivers move as they drive. In production
+// we'd push location updates through a stream + re-index in the spatial
+// index; here we just call updateLocation(Location).
 public class Driver {
 
     private final String id;
@@ -35,7 +33,7 @@ public class Driver {
     public synchronized Location getCurrentLocation() { return currentLocation; }
     public synchronized DriverStatus getStatus()      { return status; }
 
-    /** Driver came online and is now eligible for matching. */
+    // Driver came online and is now eligible for matching.
     public synchronized void goOnline(Location at) {
         this.currentLocation = at;
         this.status          = DriverStatus.AVAILABLE;
@@ -47,17 +45,15 @@ public class Driver {
         this.status = DriverStatus.OFFLINE;
     }
 
-    /**
-     * Atomic AVAILABLE → ON_TRIP transition. Returns true iff THIS caller
-     * won the reservation race. Loser gets false and must try the next driver.
-     */
+    // Atomic AVAILABLE → ON_TRIP transition. Returns true iff THIS caller
+    // won the reservation race. Loser gets false and must try the next driver.
     public synchronized boolean tryReserve() {
         if (status != DriverStatus.AVAILABLE) return false;
         status = DriverStatus.ON_TRIP;
         return true;
     }
 
-    /** Trip finished — driver becomes AVAILABLE again at the drop-off location. */
+    // Trip finished — driver becomes AVAILABLE again at the drop-off location.
     public synchronized void releaseFromTrip(Location at) {
         if (status != DriverStatus.ON_TRIP)
             throw new IllegalStateException("Driver not on trip");
@@ -65,7 +61,7 @@ public class Driver {
         this.status          = DriverStatus.AVAILABLE;
     }
 
-    /** Driver location ticked (e.g. mid-trip GPS update). */
+    // Driver location ticked (e.g. mid-trip GPS update).
     public synchronized void updateLocation(Location loc) {
         this.currentLocation = loc;
     }

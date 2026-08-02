@@ -34,7 +34,7 @@ public class CabBookingDriver {
     private static CabBookingService freshService() {
         return new CabBookingService(
                 new NearestDriverStrategy(10.0 /* km */),
-                new DistanceBasedPricing(5_000L /* ₹50.00 base */, 1_500L /* ₹15.00/km */),
+                new DistanceBasedPricing(50L /* ₹50 base */, 15L /* ₹15/km */),
                 Clock.systemUTC());
     }
 
@@ -53,7 +53,7 @@ public class CabBookingDriver {
 
         svc.startRide(ride.getId());
         long fare = svc.completeRide(ride.getId());
-        System.out.println("  fare cents: " + fare + " (~₹" + (fare / 100.0) + ")");
+        System.out.println("  fare: ₹" + fare);
         System.out.println("  ride final status: " + ride.getStatus() + " (expect COMPLETED)");
         System.out.println("  driver status:     " + d.getStatus() + " (expect AVAILABLE)");
         System.out.println();
@@ -132,8 +132,8 @@ public class CabBookingDriver {
         svc.startRide(r2.getId());
         long surgeFare = svc.completeRide(r2.getId());
 
-        System.out.println("  normal fare: " + normalFare + " cents");
-        System.out.println("  surge fare:  " + surgeFare  + " cents (expect ~2× normal)");
+        System.out.println("  normal fare: ₹" + normalFare);
+        System.out.println("  surge fare:  ₹" + surgeFare  + " (expect ~2× normal)");
         System.out.println("  ratio: " + String.format("%.2f", surgeFare / (double) normalFare) + " (expect ~2.0)");
         System.out.println();
     }

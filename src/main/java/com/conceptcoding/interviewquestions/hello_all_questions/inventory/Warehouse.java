@@ -8,21 +8,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * One storage location. Owns:
- *   - a {@code productId → quantity} map (no negative stock invariant)
- *   - a {@code productId → List<AlertConfig>} map (multiple thresholds per product)
- *   - the per-warehouse lock (coarse-grained {@code synchronized(this)})
- *
- * <p>Concurrency: every public mutator AND reader is synchronized so readers see
- * a consistent snapshot. Two threads on the SAME warehouse serialize; threads on
- * DIFFERENT warehouses never block each other — exactly what we want.
- *
- * <p>Alert protocol: state is captured under lock, then listeners are invoked
- * AFTER lock release. Prevents two pathologies:
- *   1. A slow listener (network I/O) holding the warehouse lock for seconds.
- *   2. A listener calling back into the same warehouse → reentrant deadlock-equivalent.
- */
+// One storage location. Owns:
+//   - a productId → quantity map (no negative stock invariant)
+//   - a productId → List<AlertConfig> map (multiple thresholds per product)
+//   - the per-warehouse lock (coarse-grained synchronized(this))
+//
+// Concurrency: every public mutator AND reader is synchronized so readers see
+// a consistent snapshot. Two threads on the SAME warehouse serialize; threads on
+// DIFFERENT warehouses never block each other — exactly what we want.
+//
+// Alert protocol: state is captured under lock, then listeners are invoked
+// AFTER lock release. Prevents two pathologies:
+//   1. A slow listener (network I/O) holding the warehouse lock for seconds.
+//   2. A listener calling back into the same warehouse → reentrant deadlock-equivalent.
 public class Warehouse {
 
     private final String id;
@@ -37,7 +35,7 @@ public class Warehouse {
         return id;
     }
 
-    /** Always succeeds (you can always receive more stock); fires any threshold-crossing alerts. */
+    // Always succeeds (you can always receive more stock); fires any threshold-crossing alerts.
     public void addStock(String productId, int quantity) {
         if (quantity <= 0) {
             throw new IllegalArgumentException("quantity must be > 0");
@@ -53,7 +51,7 @@ public class Warehouse {
         fireAll(toFire);
     }
 
-    /** Returns false (without mutating) if insufficient stock — enforces the no-negative-inventory invariant. */
+    // Returns false (without mutating) if insufficient stock — enforces the no-negative-inventory invariant.
     public boolean removeStock(String productId, int quantity) {
         if (quantity <= 0) return false;
         List<PendingAlert> toFire;
@@ -86,14 +84,12 @@ public class Warehouse {
 
     // ----- internals -----
 
-    /**
-     * Threshold-CROSSING check: alert fires only on the transition from
-     * "at-or-above threshold" → "below threshold". Naturally handles:
-     *   - no duplicates while stock stays below the threshold
-     *   - no spurious fires on stock increases (additions can never cross downward)
-     *   - automatic "reset" if stock recovers above the threshold and drops again
-     * No mutable state on AlertConfig required.
-     */
+    // Threshold-CROSSING check: alert fires only on the transition from
+    // "at-or-above threshold" → "below threshold". Naturally handles:
+    //   - no duplicates while stock stays below the threshold
+    //   - no spurious fires on stock increases (additions can never cross downward)
+    //   - automatic "reset" if stock recovers above the threshold and drops again
+    // No mutable state on AlertConfig required.
     private List<PendingAlert> collectAlertsToFire(String productId, int prev, int next) {
         List<AlertConfig> configs = alertConfigs.get(productId);
         if (configs == null) return List.of();
@@ -110,13 +106,24 @@ public class Warehouse {
         for (PendingAlert a : alerts) {
             try {
                 a.listener.onLowStock(id, a.productId, a.currentQuantity);
-            } catch (Throwable t) {
+            } catch (Exception e) {
                 // A misbehaving listener must not corrupt the warehouse or kill the caller.
-                System.err.println("Warehouse " + id + ": alert listener threw — " + t.getMessage());
+                // Catch Exception, NOT Throwable — never swallow JVM Errors (OOM/StackOverflow).
+                System.err.println("Warehouse " + id + ": alert listener threw — " + e.getMessage());
             }
         }
     }
 
-    /** Internal struct so collection-under-lock and firing-outside-lock are decoupled. */
-    private record PendingAlert(AlertListener listener, String productId, int currentQuantity) {}
+    // Internal struct so collection-under-lock and firing-outside-lock are decoupled.
+    private static final class PendingAlert {
+        final AlertListener listener;
+        final String productId;
+        final int currentQuantity;
+
+        PendingAlert(AlertListener listener, String productId, int currentQuantity) {
+            this.listener = listener;
+            this.productId = productId;
+            this.currentQuantity = currentQuantity;
+        }
+    }
 }

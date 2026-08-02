@@ -2,7 +2,6 @@ package com.conceptcoding.interviewquestions.hello_all_questions.inventory;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.inventory.model.AlertListener;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -152,10 +151,10 @@ public class InventoryManagerDriver {
                 : "  ✗ something raced or deadlocked");
     }
 
-    /** Thread-safe counter for the alert-crossing test. */
+    // Thread-safe counter for the alert-crossing test.
     static class CountingAlertListener implements AlertListener {
         final AtomicInteger fires = new AtomicInteger();
-        final List<String> history = Collections.synchronizedList(new CopyOnWriteArrayList<>());
+        final List<String> history = new CopyOnWriteArrayList<>();
 
         @Override
         public void onLowStock(String warehouseId, String productId, int currentQuantity) {

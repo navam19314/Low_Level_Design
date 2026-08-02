@@ -16,35 +16,31 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Facade. Holds registries + injected strategies; orchestrates the ride lifecycle:
- *
- *   1. {@link #requestRide} — finds an AVAILABLE driver via the matching
- *      strategy, atomically reserves them (AVAILABLE → ON_TRIP), creates
- *      a Ride in MATCHED.
- *   2. {@link #startRide}    — driver picked rider up; Ride MATCHED → IN_PROGRESS.
- *   3. {@link #completeRide} — drop-off; calculates fare, releases driver,
- *      Ride IN_PROGRESS → COMPLETED.
- *   4. {@link #cancelRide}   — rider cancelled before/after match; if matched,
- *      driver is released; Ride → CANCELLED.
- *
- * <p><b>Concurrency model:</b>
- *   - Registries are {@link ConcurrentHashMap} so multiple requests can be
- *     served in parallel without coarse locking.
- *   - Driver status mutation is gated by {@code Driver.tryReserve()} which
- *     is internally {@code synchronized(this)} — the AVAILABLE → ON_TRIP
- *     transition is atomic per driver.
- *   - The matching strategy returns a RANKED LIST; we iterate and try to
- *     reserve each until one wins. This is the classic "optimistic match"
- *     loop — no global lock, just per-driver CAS-style ordering.
- *   - Ride state transitions are gated by {@link Ride#transitionTo} under
- *     {@code synchronized(ride)} — concurrent complete/cancel on the same
- *     ride can't corrupt state.
- *
- * <p><b>Surge:</b> {@code currentSurgeBasisPoints} is a simple field updated
- * by some external demand-monitor (out of scope here). The pricing strategy
- * receives it per call.
- */
+// Facade. Holds registries + injected strategies; orchestrates the ride lifecycle:
+//
+//   1. requestRide  — finds an AVAILABLE driver via the matching strategy,
+//      atomically reserves them (AVAILABLE → ON_TRIP), creates a Ride in MATCHED.
+//   2. startRide    — driver picked rider up; Ride MATCHED → IN_PROGRESS.
+//   3. completeRide — drop-off; calculates fare, releases driver,
+//      Ride IN_PROGRESS → COMPLETED.
+//   4. cancelRide   — rider cancelled before/after match; if matched,
+//      driver is released; Ride → CANCELLED.
+//
+// Concurrency model:
+//   - Registries are ConcurrentHashMap so multiple requests can be served
+//     in parallel without coarse locking.
+//   - Driver status mutation is gated by Driver.tryReserve() which is
+//     internally synchronized(this) — the AVAILABLE → ON_TRIP transition
+//     is atomic per driver.
+//   - The matching strategy returns a RANKED LIST; we iterate and try to
+//     reserve each until one wins. This is the classic "optimistic match"
+//     loop — no global lock, just per-driver CAS-style ordering.
+//   - Ride state transitions are gated by Ride#transitionTo under
+//     synchronized(ride) — concurrent complete/cancel on the same ride
+//     can't corrupt state.
+//
+// Surge: currentSurgeBasisPoints is a simple field updated by some external
+// demand-monitor (out of scope here). The pricing strategy receives it per call.
 public class CabBookingService {
 
     private final ConcurrentMap<String, Driver> drivers = new ConcurrentHashMap<>();
@@ -81,10 +77,8 @@ public class CabBookingService {
 
     // ---- ride lifecycle ----
 
-    /**
-     * Try to book a ride. On success returns the Ride in MATCHED state with
-     * a Driver assigned. Throws if no driver could be reserved.
-     */
+    // Try to book a ride. On success returns the Ride in MATCHED state with
+    // a Driver assigned. Throws if no driver could be reserved.
     public Ride requestRide(Rider rider, Location pickup, Location dropoff) {
         // 1) snapshot the AVAILABLE pool. Snapshot — not live view — so the
         //    matching strategy operates on a stable list.
@@ -110,26 +104,24 @@ public class CabBookingService {
         throw new IllegalStateException("No drivers available near pickup");
     }
 
-    /** Driver arrived, rider got in — start the trip. */
+    // Driver arrived, rider got in — start the trip.
     public void startRide(String rideId) {
         Ride r = required(rideId);
         r.start();
     }
 
-    /** Drop-off — calculate fare, release driver, mark COMPLETED. */
+    // Drop-off — calculate fare (rupees), release driver, mark COMPLETED.
     public long completeRide(String rideId) {
         Ride r = required(rideId);
-        long fare = pricingStrategy.calculateFareCents(
+        long fare = pricingStrategy.calculateFare(
                 r.getSource(), r.getDestination(), currentSurgeBasisPoints);
         r.complete(fare);
         r.getDriver().releaseFromTrip(r.getDestination());
         return fare;
     }
 
-    /**
-     * Rider cancels. Allowed from REQUESTED or MATCHED. If MATCHED, the
-     * driver is released (returns to AVAILABLE at their current location).
-     */
+    // Rider cancels. Allowed from REQUESTED or MATCHED. If MATCHED, the
+    // driver is released (returns to AVAILABLE at their current location).
     public void cancelRide(String rideId) {
         Ride r = required(rideId);
         Driver d = r.getDriver();   // may be null if cancellation hits before match

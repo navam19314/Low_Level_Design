@@ -3,9 +3,38 @@
 **Target role:** SDE‑2 (Amazon, Adobe, Microsoft, Atlassian, etc.)
 **Source method:** Hello Interview *Delivery Framework* applied to the *File System* problem breakdown.
 
-> File System is the most algorithmically rich of the common LLD problems — tree manipulation, path resolution, cycle detection on `move`, and the parent-pointer vs stored-path architectural choice. Get those four right and you're senior. The natural pattern here is **Composite** (FileSystemEntry / File / Folder) — name it explicitly, even though it's not in Hello Interview's canonical 8.
+> File System is the most algorithmically rich of the common LLD problems — tree manipulation, path resolution, and the parent-pointer vs stored-path architectural choice. Get those right and you're senior. The natural pattern here is **Composite** (FileSystemEntry / File / Folder) — name it explicitly, even though it's not in Hello Interview's canonical 8.
 
 > Hello Interview labels this *medium*, but it's the **hardest** of the common LLD problems. Apply the 5-step framework strictly or you'll run out of time on the implementation.
+
+> **Scope note (read before you start coding).** The BASE you'd actually finish in 45 min is: the Composite tree (`FileSystemEntry`/`File`/`Folder`), path resolution, and CRUD — `createFile`, `createFolder`, `delete`, `list`, `get`. **`move` and `rename` are stretch goals — code them only if time allows; otherwise TALK through them** (the move-into-descendant cycle check and the rename map-key dance are the highest-value things to *describe*, even if you don't type them). They live in Step 5 here. Also: use ONE `FileSystemException` with descriptive messages, not a hierarchy of five — a 5-class exception tree is boilerplate that shows no design skill under time pressure.
+
+---
+
+## Part 0 — Understand it from scratch (read this first if you're rusty)
+
+*Skip if the design is already fresh; come back to it when it isn't.*
+
+**The real-world picture.** You're building the thing behind Finder or File Explorer — folders that hold files and other folders, nested as deep as you like, where every item has one full address (`/home/notes/todo.txt`) and knows which folder it lives in.
+
+**The two kinds of things:**
+- A **File** — an actual document; holds content, can't contain anything else.
+- A **Folder** — a container holding a mix of files and other folders, looked up by name.
+
+Both are treated the same way whenever the surrounding code just needs "a named thing with an address" — that shared identity is what lets files and folders sit in the same list and be handled uniformly, even though only folders can hold other things.
+
+**The five things you can do:**
+1. **Create a file** somewhere — save a new document into a folder.
+2. **Create a folder** somewhere.
+3. **Delete** something — a file, or a folder (and whatever's inside it).
+4. **List** what's inside a folder.
+5. **Get** something by its full address — jump straight there.
+
+**How an address turns into an actual item.** You type `/home/notes/todo.txt`. The system starts at the root, then walks one step at a time — "find `home` inside root, find `notes` inside home, find `todo.txt` inside notes" — the same way you'd click into folder after folder in a browser. If any step is missing, or you try to step *into* something that isn't a folder, it stops and says what went wrong.
+
+**Why every item "knows" its own address.** Each file and folder keeps a pointer back to the folder that contains it — like a nesting doll knowing which doll it sits inside. To report its own full address, it just asks its parent "what's *your* address?" and tacks its own name on the end, all the way up to the root. Nothing stores a full path directly — if a folder were ever moved, everything inside it would still report the right address automatically.
+
+**What's deliberately left out (for now).** Renaming and moving things around — they need extra care (you can't move a folder inside itself), so they're a follow-up extension rather than part of the basic version.
 
 ---
 
@@ -16,11 +45,11 @@
 | 1    | Requirements                                                          | ~5 min   | 5          |
 | 2    | Entities & Relationships                                              | ~4 min   | 9          |
 | 3    | Class Design (state + behavior, the FileSystemEntry abstraction)      | ~10 min  | 19         |
-| 4    | Implementation (`createFile` / `move` / `rename` + path helpers + dry run) | ~18 min | 37 |
-| 5    | Extensibility (thread-safety, search index)                            | ~7 min   | 44         |
+| 4    | Implementation (`createFile` / `delete` / `list` + path helpers + dry run) | ~16 min | 35 |
+| 5    | Extensibility (`move` + `rename` + thread-safety + search index)       | ~9 min   | 44         |
 | —    | Wrap & questions                                                      | ~1 min   | 45         |
 
-Step 4 is the longest because there are 7 public methods + 3 path helpers. Don't spend more than 18 minutes here — focus on `createFile`, `move`, `rename`, and `resolvePath` (the 4 that show the interesting decisions).
+Step 4 is the core CRUD + path helpers — the part you definitely finish. Focus on `createFile`, `resolvePath`, and the path helpers (the pieces that show the interesting decisions). `move`/`rename` are Step 5.
 
 Watch the clock at minute **5** (Step 1 done), minute **19** (start coding), minute **37** (extensibility).
 
@@ -125,22 +154,26 @@ Three pictures unlock the implementation. If you can draw them from memory, the 
 
 | Theme               | Question to ask                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Primary capabilities| "Hierarchy: single Unix root, or Windows-style drives? Operations — create/delete/list/get/rename/move?"     |
+| Primary capabilities| "Hierarchy: single Unix root, or Windows-style drives? Core ops — create/delete/list/get? (rename/move as extensions?)" |
 | Rules / completion  | "Files store actual content (strings)? Folders contain mixed files + folders? Deleting a folder also deletes its subtree?" |
-| Error handling      | "Invalid path / missing parent / name collision / delete root — all throw specific exceptions?"              |
+| Error handling      | "One `FileSystemException` with a descriptive message, or a hierarchy of specific types? (I'll default to one.)"          |
 | Scope boundaries    | "Out: search, relative paths, permissions, timestamps, symlinks, persistence, UI — confirm?"                 |
 
 ### What to write on the board
 
 ```
-Functional Requirements
+Functional Requirements — BASE (what you finish in 45 min)
 1. Hierarchical file system with a single root "/".
 2. Files store string content; folders contain mixed children (files OR folders).
-3. Public operations: createFile, createFolder, delete, list, get, rename, move.
+3. Core operations: createFile, createFolder, delete, list, get.
 4. Absolute paths only (Unix-style: /home/user/notes.txt).
 5. Every entry must be able to report its full path.
-6. Distinct, specific exceptions for: invalid path, not found, already exists, not-a-directory.
+6. One FileSystemException with a descriptive message (not a 5-class hierarchy).
 7. Scale: tens of thousands of entries, deep hierarchies stay responsive.
+
+Stretch / Step 5 (talk through; code only if time allows)
+- move  (with the move-into-descendant cycle check)
+- rename (with the map-key re-insert dance)
 
 Out of Scope
 - Search functionality (Step 5)
@@ -170,7 +203,8 @@ Out of Scope
 
 ```
 Entities
-- FileSystem          (orchestrator + facade: createFile, delete, move, rename, list, get)
+- FileSystem          (orchestrator + facade: createFile, createFolder, delete, list, get
+                        — plus move/rename as Step-5 extensions)
 - FileSystemEntry     (abstract base: name + parent + getPath + isDirectory)   <-- shared abstraction
    ├── File           (leaf: content)
    └── Folder         (composite: Map<String, FileSystemEntry> children)
@@ -179,7 +213,7 @@ Relationships
 - FileSystem owns      Folder (root)
 - Folder    contains   Map<String, FileSystemEntry> children
 - Every FSEntry        knows its parent Folder (or null for root)
-                       ^ this back-pointer is what makes getPath() / rename / move cheap
+                       ^ this back-pointer is what makes getPath() cheap (and, in Step 5, rename/move)
 ```
 
 > **Composite vs HI's canonical 8:** Hello Interview's canonical 8 doesn't include Composite. But it's the right name for what we're building, and any senior interviewer will recognize it. Say "*the natural pattern here is Composite*" once, then move on — don't oversell.
@@ -238,9 +272,9 @@ That's it — `FileSystem` has exactly one field. Path parsing is *derived* from
 | Remove entries                      | `void delete(String path)`                            |
 | List contents of a folder           | `List<FileSystemEntry> list(String path)`             |
 | Resolve a path to its entry         | `FileSystemEntry get(String path)`                    |
-| Rename in place                     | `void rename(String path, String newName)`            |
-| Move between locations              | `void move(String srcPath, String destPath)`          |
 | Path parsing                        | Private helpers: `resolvePath`, `resolveParent`, `extractName` |
+| *(Step 5)* Rename in place          | `void rename(String path, String newName)`            |
+| *(Step 5)* Move between locations   | `void move(String srcPath, String destPath)`          |
 
 ### FileSystemEntry — outline (abstract, the Composite base)
 
@@ -299,8 +333,8 @@ public class Folder extends FileSystemEntry {
 | + delete(p)              |   | + getName / setName     |   | + addChild(e): bool      |
 | + list(p): List<FSEntry> |   | + getParent / setParent |   | + removeChild(n): FSEntry|
 | + get(p): FSEntry        |   | + getPath(): String     |   | + getChild(n): FSEntry   |
-| + rename(p, n)           |   | + isDirectory():        |   | + hasChild(n): bool      |
-| + move(src, dest)        |   |     abstract bool       |   | + getChildren(): List    |
+| + rename(p,n)  [Step 5]  |   | + isDirectory():        |   | + hasChild(n): bool      |
+| + move(s,d)    [Step 5]  |   |     abstract bool       |   | + getChildren(): List    |
 +--------------------------+   +-------------------------+   | + isDirectory(): true    |
                                        ^                     +--------------------------+
                                        |
@@ -329,10 +363,10 @@ FSEntry    --back-refs--> Folder (parent)
 
 ---
 
-## STEP 4 — Implementation (~18 min)
+## STEP 4 — Implementation (~16 min)
 
 ### Open by asking
-> "Real Java or pseudo-code? I'll walk through `createFile` first (the simplest CRUD), then the path helpers (which all other methods reuse), then `move` (the most complex), then dry-run a scenario."
+> "Real Java or pseudo-code? I'll walk through `createFile` first (the simplest CRUD), then the path helpers (which all other methods reuse), then dry-run a scenario. If there's time, `move` and `rename` are the interesting stretch — otherwise I'll talk through them in Step 5."
 
 ### 4.1 `createFile` — flow + code
 
@@ -341,7 +375,7 @@ FSEntry    --back-refs--> Folder (parent)
         |
         v
    +----------------------------+
-   | path == "/" ?              |--yes--> InvalidPathException
+   | path == "/" ?              |--yes--> FileSystemException
    +----------------------------+
                 | no
                 v
@@ -351,7 +385,7 @@ FSEntry    --back-refs--> Folder (parent)
    +----------------------------+
                 v
    +----------------------------+
-   | parent.hasChild(name) ?    |--yes--> AlreadyExistsException
+   | parent.hasChild(name) ?    |--yes--> FileSystemException
    +----------------------------+
                 | no
                 v
@@ -365,11 +399,11 @@ FSEntry    --back-refs--> Folder (parent)
 
 ```java
 public File createFile(String path, String content) {
-    if (ROOT.equals(path)) throw new InvalidPathException("Cannot create file at root");
+    if (ROOT.equals(path)) throw new FileSystemException("Cannot create file at root");
     Folder parent = resolveParent(path);
     String fileName = extractName(path);
     if (parent.hasChild(fileName)) {
-        throw new AlreadyExistsException("Entry already exists: " + path);
+        throw new FileSystemException("Entry already exists: " + path);
     }
     File file = new File(fileName, content);
     parent.addChild(file);
@@ -387,28 +421,28 @@ These three methods are the secret to keeping the public API readable.
 // Walk one component at a time. Throws for null/empty, non-absolute,
 // missing component, or hitting a file when more components remain.
 private FileSystemEntry resolvePath(String path) {
-    if (path == null || path.isEmpty()) throw new InvalidPathException("Path cannot be null/empty");
-    if (!path.startsWith(SEPARATOR))    throw new InvalidPathException("Path must be absolute");
+    if (path == null || path.isEmpty()) throw new FileSystemException("Path cannot be null/empty");
+    if (!path.startsWith(SEPARATOR))    throw new FileSystemException("Path must be absolute");
     if (ROOT.equals(path))              return root;
 
     String[] parts = path.substring(1).split(SEPARATOR);
     FileSystemEntry current = root;
     for (String part : parts) {
-        if (part.isEmpty())          throw new InvalidPathException("Consecutive slashes");
-        if (!current.isDirectory())  throw new NotADirectoryException("Not a dir: " + current.getPath());
+        if (part.isEmpty())          throw new FileSystemException("Consecutive slashes");
+        if (!current.isDirectory())  throw new FileSystemException("Not a dir: " + current.getPath());
         FileSystemEntry child = ((Folder) current).getChild(part);
-        if (child == null)            throw new NotFoundException("Path not found: " + path);
+        if (child == null)            throw new FileSystemException("Path not found: " + path);
         current = child;
     }
     return current;
 }
 
 private Folder resolveParent(String path) {
-    if (ROOT.equals(path)) throw new InvalidPathException("Root has no parent");
+    if (ROOT.equals(path)) throw new FileSystemException("Root has no parent");
     int lastSlash = path.lastIndexOf(SEPARATOR);
     String parentPath = (lastSlash == 0) ? ROOT : path.substring(0, lastSlash);
     FileSystemEntry parent = resolvePath(parentPath);
-    if (!parent.isDirectory()) throw new NotADirectoryException(...);
+    if (!parent.isDirectory()) throw new FileSystemException(...);
     return (Folder) parent;
 }
 
@@ -419,100 +453,7 @@ private String extractName(String path) {
 
 > **Senior callout:** *"These three helpers are private and reused by every public method. If I didn't extract them, `createFile`, `createFolder`, `delete`, `rename`, and `move` would each contain a copy of the same path-parsing logic — DRY violation, bug magnet. With the extraction, the public methods stay focused on their actual job."*
 
-### 4.3 `move` — the most interesting method (cycle check!)
-
-```
-   move(srcPath, destPath)
-        |
-        v
-   +----------------------------------+
-   | srcPath == "/" ?                 |--yes--> InvalidPathException
-   +----------------------------------+
-                  | no
-                  v
-   +----------------------------------+
-   | entry = srcParent.getChild(...)  |
-   | entry == null ?                  |--yes--> NotFoundException
-   +----------------------------------+
-                  | no
-                  v
-   +----------------------------------+   <-- the senior bit
-   | entry isDirectory AND cursor =   |
-   | destParent; walk up via parent — |
-   | if we hit `entry`, it's a cycle  |--yes--> InvalidPathException
-   +----------------------------------+
-                  | no cycle
-                  v
-   +----------------------------------+
-   | destParent.hasChild(destName) ?  |--yes--> AlreadyExistsException
-   +----------------------------------+
-                  | no
-                  v
-   +----------------------------------+
-   | srcParent.removeChild(srcName)   |
-   | entry.setName(destName)          |
-   | destParent.addChild(entry)       |  (back-pointer auto-updated)
-   +----------------------------------+
-```
-
-```java
-public void move(String srcPath, String destPath) {
-    if (ROOT.equals(srcPath)) throw new InvalidPathException("Cannot move root");
-
-    Folder srcParent = resolveParent(srcPath);
-    String srcName = extractName(srcPath);
-    FileSystemEntry entry = srcParent.getChild(srcName);
-    if (entry == null) throw new NotFoundException("Source not found: " + srcPath);
-
-    Folder destParent = resolveParent(destPath);
-    String destName = extractName(destPath);
-
-    // Cycle check — only matters for directories.
-    if (entry.isDirectory()) {
-        Folder cursor = destParent;
-        while (cursor != null) {
-            if (cursor == entry) {
-                throw new InvalidPathException("Cannot move folder into itself or a descendant");
-            }
-            cursor = cursor.getParent();
-        }
-    }
-
-    if (destParent.hasChild(destName)) {
-        throw new AlreadyExistsException("Destination already exists: " + destPath);
-    }
-
-    srcParent.removeChild(srcName);
-    entry.setName(destName);
-    destParent.addChild(entry);
-}
-```
-
-> **Senior callout on cycle detection:** *"If I move `/home` into `/home/user/stuff`, the tree would have `/home` as both ancestor AND descendant of `/home/user` — an impossible loop. I detect this by walking from `destParent` upward via parent pointers; if I ever hit `entry`, the move would create a cycle, reject. This is the **leetcode-y trap** in this problem — easy to miss until your interviewer points to it."*
-
-### 4.4 `rename` — the map-key dance
-
-```java
-public void rename(String path, String newName) {
-    if (ROOT.equals(path)) throw new InvalidPathException("Cannot rename root");
-    if (newName == null || newName.isEmpty() || newName.contains(SEPARATOR)) {
-        throw new InvalidPathException("Invalid name: " + newName);
-    }
-    Folder parent = resolveParent(path);
-    String oldName = extractName(path);
-    if (!parent.hasChild(oldName))       throw new NotFoundException("Entry not found: " + path);
-    if (parent.hasChild(newName))        throw new AlreadyExistsException("Sibling exists: " + newName);
-
-    // The map is keyed by name — must re-insert under the new key, not just mutate.
-    FileSystemEntry entry = parent.removeChild(oldName);
-    entry.setName(newName);
-    parent.addChild(entry);
-}
-```
-
-> **Senior callout:** *"You can't just call `entry.setName(new)` — the parent's `Map<String, FSEntry>` is keyed by the OLD name. You'd have a ghost entry under the old key and the new name would never resolve. Remove-rename-readd is the only correct sequence."*
-
-### 4.5 Folder's bidirectional consistency (the subtle but critical bit)
+### 4.3 Folder's bidirectional consistency (the subtle but critical bit)
 
 ```java
 public boolean addChild(FileSystemEntry entry) {
@@ -531,7 +472,7 @@ public FileSystemEntry removeChild(String name) {
 
 > **Senior callout:** *"`addChild` and `removeChild` are the ONLY places allowed to mutate `entry.parent`. If callers could bypass them and set parent directly, the tree would desync — `getPath()` would walk to a parent that doesn't list the child. Tight invariants here are why I made `children` private and exposed methods."*
 
-### 4.6 Verification — dry-run a build + move + rename
+### 4.4 Verification — dry-run a build + list + delete
 
 ```
 Setup: empty FileSystem; root = Folder("/"), root.parent = null.
@@ -566,42 +507,92 @@ get("/home/user/notes.txt").getPath():
    -> "/home" + "/" + "user" = "/home/user"
  -> "/home/user" + "/" + "notes.txt" = "/home/user/notes.txt"                         ✓
 
-move("/home/user/notes.txt", "/home/notes.txt"):
-   entry = file (under user)
-   destParent = home, destName = "notes.txt"
-   Cycle check: file is not a directory -> skip
-   home.hasChild("notes.txt") -> false
-   user.removeChild("notes.txt") -> file (file.parent = null transiently)
-   file.setName("notes.txt") -> unchanged
-   home.addChild(file) -> file.parent = home
-   STATE: user.children = {}, home.children = {"user"->..., "notes.txt"->file}      ✓
+list("/home"):
+   resolvePath("/home") -> home (a directory ✓)
+   return home.getChildren() -> ["user"]                                             ✓
 
-rename("/home", "users"):
-   parent = root, oldName = "home"
-   root.hasChild("home") -> true, root.hasChild("users") -> false
-   entry = root.removeChild("home") -> home folder (parent transiently null)
-   home.setName("users")
-   root.addChild(home) -> home.parent = root (now keyed by "users")
-   STATE: root.children = {"users"->home}, home.name = "users"                      ✓
+list("/readme.txt"):   -- listing a file is rejected
+   resolvePath -> File; not a directory -> throws FileSystemException                ✓
 
-get("/users/notes.txt").getPath():  -- works because getPath walks parent pointers,
-                                       which root/home/file all still maintain
-   -> "/users/notes.txt"                                                              ✓
+delete("/home"):
+   resolveParent("/home") -> root; extractName -> "home"
+   root.removeChild("home") -> home folder (the WHOLE subtree goes with it, because
+   nothing else references user/notes.txt once home is unlinked)
+   STATE: root.children = {"readme.txt"->...}                                        ✓
 
-move("/users", "/users/user/loop"):   -- attempted cycle
-   entry = home folder (now "users"), entry.isDirectory() = true
-   destParent = user folder
-   Cycle check: cursor = user; user.parent = home/users = entry -> CYCLE DETECTED
-   throws InvalidPathException                                                        ✓
+get("/home"):   -- after delete
+   resolvePath walks root; root has no "home" child -> throws FileSystemException    ✓
 ```
 
-> **Senior callout from the trace:** *"The trick that makes rename work cheaply: the path is **computed from parent pointers**, never stored. When I rename `/home` to `/users`, I don't touch any descendant — they all auto-resolve to the new path the next time `getPath()` is called. The opposite design (storing the full path string on every entry) would require walking every descendant on every rename — that's O(N) per rename, with N = total descendants."*
+> **Senior callout from the trace:** *"The path is **computed from parent pointers**, never stored on each entry. `getPath()` walks up to root on demand. That's the choice that makes the Step-5 `rename` cheap — renaming `/home` to `/users` touches ONE node, and every descendant auto-resolves to the new path next time. The opposite design (a stored path string on every entry) would force walking every descendant on every rename — O(N) per rename. Also note delete: unlinking a folder drops its entire subtree in one operation, because Java GC reclaims anything no longer reachable from the tree."*
 
 ---
 
-## STEP 5 — Extensibility (~7 min)
+## STEP 5 — Extensibility (~9 min)
 
-### 5.1 "Make the file system thread-safe"
+> `move` and `rename` were kept out of the base on purpose — they're the interesting *stretch*. If you had time in Step 4 you'd code them; if not, this is where you TALK through them. The cycle-check in `move` and the map-key dance in `rename` are the two highest-value things to describe even if you never type them.
+
+### 5.1 `rename` — the map-key dance
+
+```java
+public void rename(String path, String newName) {
+    if (ROOT.equals(path)) throw new FileSystemException("Cannot rename root");
+    if (newName == null || newName.isEmpty() || newName.contains(SEPARATOR)) {
+        throw new FileSystemException("Invalid name: " + newName);
+    }
+    Folder parent = resolveParent(path);
+    String oldName = extractName(path);
+    if (!parent.hasChild(oldName))  throw new FileSystemException("Entry not found: " + path);
+    if (parent.hasChild(newName))   throw new FileSystemException("Sibling exists: " + newName);
+
+    // The map is keyed by name — must re-insert under the new key, not just mutate.
+    FileSystemEntry entry = parent.removeChild(oldName);
+    entry.setName(newName);
+    parent.addChild(entry);
+}
+```
+
+> **Senior callout:** *"You can't just call `entry.setName(new)` — the parent's `Map<String, FSEntry>` is keyed by the OLD name. You'd have a ghost entry under the old key and the new name would never resolve. Remove-rename-readd is the only correct sequence. And because paths are computed from parent pointers, renaming a folder auto-updates every descendant's path for free."*
+
+### 5.2 `move` — the cycle-check trap (the marquee extension)
+
+```java
+public void move(String srcPath, String destPath) {
+    if (ROOT.equals(srcPath)) throw new FileSystemException("Cannot move root");
+
+    Folder srcParent = resolveParent(srcPath);
+    String srcName = extractName(srcPath);
+    FileSystemEntry entry = srcParent.getChild(srcName);
+    if (entry == null) throw new FileSystemException("Source not found: " + srcPath);
+
+    Folder destParent = resolveParent(destPath);
+    String destName = extractName(destPath);
+
+    // Cycle check — only matters for directories. Walk UP from destParent;
+    // if we ever hit `entry`, the move would make a folder its own ancestor.
+    if (entry.isDirectory()) {
+        Folder cursor = destParent;
+        while (cursor != null) {
+            if (cursor == entry) {
+                throw new FileSystemException("Cannot move folder into itself or a descendant");
+            }
+            cursor = cursor.getParent();
+        }
+    }
+
+    if (destParent.hasChild(destName)) {
+        throw new FileSystemException("Destination already exists: " + destPath);
+    }
+
+    srcParent.removeChild(srcName);
+    entry.setName(destName);
+    destParent.addChild(entry);
+}
+```
+
+> **Senior callout on cycle detection:** *"If I move `/home` into `/home/user/stuff`, `/home` would be both ancestor AND descendant of `/home/user` — an impossible loop. I detect it by walking from `destParent` upward via parent pointers; if I ever hit `entry`, reject. This is the leetcode-y trap in this problem — the thing to name out loud even if you don't finish coding move, because most candidates miss it until the interviewer points at it."*
+
+### 5.3 "Make the file system thread-safe"
 
 > **Problem in current design:** *"Right now everything assumes single-threaded access. Two threads both calling `createFile` on the same path can both pass the `hasChild` check, both succeed in `addChild` — and either overwrite silently or corrupt the map. Classic check-then-act race."*
 >
@@ -629,7 +620,7 @@ public void move(String srcPath, String destPath) {
 }
 ```
 
-### 5.2 "Add search by name"
+### 5.4 "Add search by name"
 
 > **Problem in current design:** *"To find a file by name, I'd walk the entire tree — O(N) per search. Tens of thousands of entries means tens of thousands of comparisons every time."*
 >
@@ -647,7 +638,7 @@ nameIndex.computeIfAbsent(name, k -> new ArrayList<>()).add(entry);
 nameIndex.getOrDefault(oldName, List.of()).remove(entry);
 ```
 
-### 5.3 Other "what-if" answers
+### 5.5 Other "what-if" answers
 
 | Follow-up                                  | Answer                                                                                              |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
@@ -774,8 +765,8 @@ The whole design is testable because there's no I/O — every operation is pure 
 | Existence errors            | Create when exists; delete when missing; get when missing                                                   |
 | Root protection             | Cannot delete `/`; cannot rename `/`; cannot move `/`; cannot create file at `/`                            |
 | Rename consistency          | Renaming a folder updates all descendants' `getPath()` results — even though no descendant fields changed   |
-| Move — cycle detection      | Move `/a` into `/a/b/c` → InvalidPathException; move `/a/b` into `/x` (no cycle) → succeeds                 |
-| Move — name collision       | Move `/a/file` into `/b` when `/b/file` exists → AlreadyExistsException                                     |
+| Move — cycle detection      | Move `/a` into `/a/b/c` → FileSystemException; move `/a/b` into `/x` (no cycle) → succeeds                 |
+| Move — name collision       | Move `/a/file` into `/b` when `/b/file` exists → FileSystemException                                     |
 | Bidirectional consistency   | After move, both source-parent.getChildren and dest-parent.getChildren are correct AND entry.parent updated |
 
 ```java
@@ -798,16 +789,16 @@ void move_into_own_descendant_throws_cycle_error() {
     fs.createFolder("/a");
     fs.createFolder("/a/b");
     fs.createFolder("/a/b/c");
-    assertThrows(InvalidPathException.class, () -> fs.move("/a", "/a/b/c/loop"));
+    assertThrows(FileSystemException.class, () -> fs.move("/a", "/a/b/c/loop"));
 }
 
 @Test
 void distinct_exception_types_for_distinct_failures() {
     FileSystem fs = new FileSystem();
-    assertThrows(InvalidPathException.class, () -> fs.createFile("not-absolute", "x"));
-    assertThrows(NotFoundException.class,    () -> fs.get("/missing"));
+    assertThrows(FileSystemException.class, () -> fs.createFile("not-absolute", "x"));
+    assertThrows(FileSystemException.class,    () -> fs.get("/missing"));
     fs.createFile("/dup.txt", "x");
-    assertThrows(AlreadyExistsException.class, () -> fs.createFile("/dup.txt", "x"));
+    assertThrows(FileSystemException.class, () -> fs.createFile("/dup.txt", "x"));
 }
 ```
 
@@ -825,7 +816,7 @@ void distinct_exception_types_for_distinct_failures() {
 
 ### 5. "Summarize your design in 30 seconds"
 
-> *"Four classes: FileSystem, FileSystemEntry (abstract), File, Folder. FileSystem is the facade — it owns root, parses paths, and exposes the 7 public operations. FileSystemEntry is the Composite component — both File and Folder share name + parent + getPath(). File is the leaf with content; Folder is the composite with a `Map<String, FSEntry>` of children. Bidirectional consistency lives in `addChild` and `removeChild` — they're the only places that mutate `parent`. The architectural choice that earns rent is parent pointers over stored paths: rename a folder, and every descendant's `getPath()` auto-resolves to the new path because it walks parents up to root. Move includes a cycle check that walks from dest-parent upward — if we ever hit the entry being moved, we'd create an impossible loop. Path parsing is three private helpers — `resolvePath`, `resolveParent`, `extractName` — that every public method reuses, keeping the public API focused. Extensions: thread-safety via a 3-tier menu (coarse-sync → per-folder lock with ordering → read-write lock); search via a name-index Map updated alongside the tree."*
+> *"Four classes: FileSystem, FileSystemEntry (abstract), File, Folder. FileSystem is the facade — it owns root, parses paths, and exposes 5 core operations: createFile, createFolder, delete, list, get. FileSystemEntry is the Composite component — both File and Folder share name + parent + getPath(). File is the leaf with content; Folder is the composite with a `Map<String, FSEntry>` of children. Bidirectional consistency lives in `addChild` and `removeChild` — they're the only places that mutate `parent`. The architectural choice that earns rent is parent pointers over stored paths: it makes getPath() a lazy walk to root, and it's what makes the Step-5 rename O(1) — every descendant auto-resolves to the new path. One `FileSystemException` with descriptive messages, not a five-class hierarchy. Path parsing is three private helpers — `resolvePath`, `resolveParent`, `extractName` — that every method reuses. Extensions: `move` (with the walk-up-from-dest cycle check — the marquee trap), `rename` (the map-key re-insert dance), thread-safety via a 3-tier menu (coarse-sync → per-folder lock with ordering → read-write lock), and search via a name-index Map."*
 
 That's ~50 seconds. Hits: structure (4 classes), the Composite pattern named, the parent-pointer architectural call, the cycle-check insight, the DRY path helpers, and extensibility.
 
@@ -851,7 +842,7 @@ That's ~50 seconds. Hits: structure (4 classes), the Composite pattern named, th
 - **Forgetting the cycle check in `move`** — the most common slip. Many candidates pass `move` until the interviewer says "what if I do `move('/home', '/home/user')`?"
 - **Calling `entry.setName(new)` without remove/add** — entry orphaned under the old map key. Subtle bug; only surfaces on the next `get`/`list`.
 - **Mutating `entry.parent` from outside `addChild`/`removeChild`** — desyncs the bidirectional link. Tight encapsulation is the senior signal here.
-- **Lumping all errors into one `Exception`** — the article specifies "specific exception types so callers can handle different failure modes". Use 4 distinct classes.
+- **Building a 5-class exception hierarchy** — under 45-min pressure that's boilerplate with no design payoff. Use ONE `FileSystemException` with a descriptive message; only split into subtypes if a caller genuinely needs to branch on the failure kind (say so, don't pre-build it).
 - **Inlining path parsing in every public method** — DRY violation; the helpers exist for a reason.
 - **Adding `Path` as a class** — it has no state and no rules, just parse the string.
 - **Pattern-stuffing — adding Strategy / Factory / Builder unprompted** — File System needs Composite + Facade, not the full GoF zoo.
@@ -866,13 +857,9 @@ That's ~50 seconds. Hits: structure (4 classes), the Composite pattern named, th
 | `model/FileSystemEntry.java`               | Abstract Composite base — name, parent, getPath() walks parent pointers                  |
 | `model/File.java`                          | Leaf node — content + isDirectory() = false                                              |
 | `model/Folder.java`                        | Composite node — children map; addChild/removeChild keep parent pointers in sync         |
-| `exception/FileSystemException.java`       | Base for all FS exceptions (one catch handles all)                                       |
-| `exception/InvalidPathException.java`      | null / empty / non-absolute / consecutive slashes                                        |
-| `exception/NotFoundException.java`         | Path resolved but entry missing                                                          |
-| `exception/AlreadyExistsException.java`    | Create / move / rename into existing name                                                |
-| `exception/NotADirectoryException.java`    | Tried to list a file, or pathwalk hit a file when more components remain                 |
-| `FileSystem.java`                          | Orchestrator + facade — 7 public methods + 3 private path helpers + cycle check on move  |
-| `FileSystemDriver.java`                    | Scenario harness — build/move/rename/cycle/delete-root/delete-subtree                    |
+| `exception/FileSystemException.java`       | The ONE exception type — descriptive message, one catch handles all FS errors            |
+| `FileSystem.java`                          | Orchestrator + facade — 5 core methods (createFile/createFolder/delete/list/get) + 3 private path helpers |
+| `FileSystemDriver.java`                    | Scenario harness — build/list/read/duplicate/missing/list-a-file/delete-root/delete-subtree |
 
 Run from the project root:
 

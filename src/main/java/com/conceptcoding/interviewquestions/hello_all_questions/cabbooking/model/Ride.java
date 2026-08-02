@@ -3,18 +3,15 @@ package com.conceptcoding.interviewquestions.hello_all_questions.cabbooking.mode
 import java.time.Clock;
 import java.time.Instant;
 
-/**
- * One ride request — joins a rider, an optional driver (assigned at MATCHED),
- * source / destination locations, lifecycle status, fare (cents), and timestamps.
- *
- * <p>State transitions go through {@link #transitionTo(RideStatus)} which
- * consults {@link RideStatus#canTransitionTo} — invalid transitions throw.
- * No setter takes a Status directly; the only way to mutate is via the
- * lifecycle methods ({@link #match}, {@link #start}, {@link #complete},
- * {@link #cancel}) so the state machine can't be bypassed.
- *
- * <p>Fare is {@code long cents} (always — never doubles for money).
- */
+// One ride request — joins a rider, an optional driver (assigned at MATCHED),
+// source / destination locations, lifecycle status, fare (rupees), and timestamps.
+//
+// State transitions go through transitionTo(RideStatus) which consults
+// RideStatus#canTransitionTo — invalid transitions throw. No setter takes a
+// Status directly; the only way to mutate is via the lifecycle methods
+// (match, start, complete, cancel) so the state machine can't be bypassed.
+//
+// Fare is long rupees (always — never doubles for money).
 public class Ride {
 
     private final String   id;
@@ -26,7 +23,7 @@ public class Ride {
 
     private Driver     driver;          // null until MATCHED
     private RideStatus status;
-    private long       fareCents = -1;  // set on complete()
+    private long       fare = -1;       // rupees, set on complete()
     private Instant    matchedAt;
     private Instant    startedAt;
     private Instant    completedAt;
@@ -48,7 +45,7 @@ public class Ride {
     public Location   getSource()      { return source; }
     public Location   getDestination() { return destination; }
     public RideStatus getStatus()      { return status; }
-    public long       getFareCents()   { return fareCents; }
+    public long       getFare()        { return fare; }
     public Instant    getCreatedAt()   { return createdAt; }
     public Instant    getMatchedAt()   { return matchedAt; }
     public Instant    getStartedAt()   { return startedAt; }
@@ -68,9 +65,9 @@ public class Ride {
         this.startedAt = Instant.now(clock);
     }
 
-    public synchronized void complete(long fareCents) {
+    public synchronized void complete(long fare) {
         transitionTo(RideStatus.COMPLETED);
-        this.fareCents   = fareCents;
+        this.fare        = fare;
         this.completedAt = Instant.now(clock);
     }
 

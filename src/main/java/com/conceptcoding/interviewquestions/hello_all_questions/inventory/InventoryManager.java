@@ -8,15 +8,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-/**
- * Orchestrator + facade. Owns warehouses (fixed at startup) and routes operations
- * to them. The interesting method is {@link #transfer} — coordinates two warehouses
- * atomically with ORDERED LOCK ACQUISITION to prevent deadlock.
- *
- * <p>All other methods are thin delegation: look up warehouse(s), call the right
- * method, return the result. Validation happens at the boundary (null warehouse,
- * non-positive quantity).
- */
+// Orchestrator + facade. Owns warehouses (fixed at startup) and routes operations
+// to them. The interesting method is transfer() — coordinates two warehouses
+// atomically with ORDERED LOCK ACQUISITION to prevent deadlock.
+//
+// All other methods are thin delegation: look up warehouse(s), call the right
+// method, return the result. Validation happens at the boundary (null warehouse,
+// non-positive quantity).
 public class InventoryManager {
 
     private final Map<String, Warehouse> warehouses;
@@ -55,18 +53,16 @@ public class InventoryManager {
         warehouseOrThrow(warehouseId).setLowStockAlert(productId, threshold, listener);
     }
 
-    /**
-     * Atomically move stock from {@code fromId} to {@code toId}.
-     *
-     * <p>Why ORDERED lock acquisition: thread A doing A→B and thread B doing B→A
-     * would otherwise deadlock — A holds(A) and waits for B; B holds(B) and waits
-     * for A. Acquiring locks in a globally consistent order (compareTo) breaks the
-     * cycle: both threads acquire the alphabetically-first warehouse first.
-     *
-     * <p>Java's {@code synchronized} is reentrant, so calls into
-     * {@code removeStock}/{@code addStock} (which themselves use {@code synchronized(this)})
-     * don't re-block — they re-enter the lock the current thread already holds.
-     */
+    // Atomically move stock from fromId to toId.
+    //
+    // Why ORDERED lock acquisition: thread A doing A→B and thread B doing B→A
+    // would otherwise deadlock — A holds(A) and waits for B; B holds(B) and waits
+    // for A. Acquiring locks in a globally consistent order (compareTo) breaks the
+    // cycle: both threads acquire the alphabetically-first warehouse first.
+    //
+    // Java's synchronized is reentrant, so calls into removeStock/addStock (which
+    // themselves use synchronized(this)) don't re-block — they re-enter the lock
+    // the current thread already holds.
     public boolean transfer(String productId, String fromId, String toId, int quantity) {
         if (quantity <= 0)        return false;
         if (fromId.equals(toId))  return false;
