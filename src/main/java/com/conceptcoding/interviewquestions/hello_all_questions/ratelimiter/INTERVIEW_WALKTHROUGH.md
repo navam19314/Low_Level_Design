@@ -1,532 +1,594 @@
-# Rate Limiter — 45-min LLD Interview Walkthrough
+# Rate Limiter
 
-**Target:** SDE-2 at Amazon, Adobe, Microsoft, Flipkart, etc.
-
-> Rate Limiter is **algorithm-heavy**. The three things interviewers test: (1) you know at least two algorithms and their tradeoffs, (2) you get the refill math right (tokens as `double`, cap at capacity, `ceil` on retry), (3) you know why per-key locking beats a global lock. Get these three and you're set.
-
----
-
-## Time Budget
-
-| Step | What you're doing                                   | Time   |
-|------|-----------------------------------------------------|--------|
-| 1    | Requirements                                        | 5 min  |
-| 2    | Entities + relationships                            | 4 min  |
-| 3    | Class design                                        | 10 min |
-| 4    | Code: TokenBucket end-to-end + SlidingWindow sketch | 18 min |
-| 5    | Extensibility                                       | 7 min  |
-
-Step 4 is the longest because the refill math and retry math both need a dry-run — don't skip it.
+> **Amazon:** ★ the most reported LLD (3 times in 2026, across LLD, Hiring Manager and Bar Raiser rounds). The follow-up is almost always *"make it distributed"*.
+>
+> **The crux (what's really being tested):**
+> 1. The **algorithm math**: time-based refill done lazily, with no background thread.
+> 2. **Per-client locking**: one client's traffic never blocks another's.
+>
+> **Family:** F5 Swappable policy (see [foundations](../00_AMAZON_LLD_FOUNDATIONS.md)) + per-key state (concurrency tool A).
+> **Pattern:** Strategy. That's the only one the base design needs.
 
 ---
 
-## Mental Models — know these before you walk in
+## 1. Plain-language picture
 
-### M1. The two algorithms
+A rate limiter answers one question for every incoming request: **"Is this client allowed to make a request right now?"** It exists to protect the server from overload and stop one client hogging capacity.
 
-**Token Bucket** — think of a bucket that refills at a fixed rate.
-
-```
-bucket starts full (capacity = 5 tokens)
-
-request arrives → take 1 token → allow
-request arrives → take 1 token → allow
-...
-bucket empty    → deny. tell client: retry in X ms (time to refill 1 token)
-
-while idle → tokens accumulate, capped at capacity
-```
-
-Key numbers: `capacity` (max burst), `refillRatePerSecond` (steady-state throughput).
-
-**Sliding Window Log** — remember the exact timestamp of every request in the last N ms.
+### Token Bucket: a jar of tokens
 
 ```
-window = 1000ms, maxRequests = 3
-
-t=0   req → log=[0]         size=1 → allow
-t=100 req → log=[0,100]     size=2 → allow
-t=200 req → log=[0,100,200] size=3 → allow
-t=300 req → size=3 already  → deny. retry when t=0 ages out (in 700ms)
-t=1001 → t=0 evicted, log=[100,200] size=2 → allow
+Every client has a jar.         Jar holds at most 5 tokens  (capacity  = max burst)
+Each request costs 1 token.     A tap drips 1 token/second  (refill rate = steady speed)
+Jar empty → "wait, try again in X ms"
 ```
 
-Key number: `maxRequests` per `windowMs`. More accurate than Token Bucket (no boundary burst), costs more memory (O(maxRequests) per client vs O(1)).
+The key insight: **nobody needs to stand at the tap.** When a client comes back after 3 seconds, you work out that 3 tokens *would have* dripped in, add them (never above 5), then decide. The work happens only when a request arrives (**lazy refill**). With a million idle clients, you do zero work for them.
 
-### M2. Token Bucket refill math — what candidates get wrong
+Why it's the default choice: it **allows short bursts** (a user clicking fast 5 times is fine) but **caps the long-run rate**.
 
-```
-On every allow() call:
-
-now         = clock.millis()
-elapsedMs   = now - lastRefillTime
-tokensToAdd = elapsedMs * refillRatePerSecond / 1000.0
-tokens      = min(capacity, tokens + tokensToAdd)   ← CAP!
-lastRefillTime = now
-
-Why double (not int)?
-  100ms at 1/s = 0.1 tokens. int rounds to 0 → bucket never refills.
-
-Why cap at capacity?
-  Client idle 10 min at refill=1/s → 600 tokens without cap → burst limit gone.
-
-retryAfterMs when denied:
-  tokensNeeded = 1.0 - tokens
-  retryAfterMs = ceil(tokensNeeded * 1000 / refillRatePerSecond)
-  Use ceil — never tell client to retry too soon (causes another denial).
-```
-
-### M3. Per-key locking — why it beats a global lock
+### Sliding Window Log: a guestbook
 
 ```
-Global lock (wrong):              Per-key lock (right):
-synchronized(this) {              Bucket b = map.computeIfAbsent(key, ...);
-  allow(key) { ... }              synchronized(b) { ... }
-}
-
-All clients block each other.     Only the SAME client's requests serialize.
-Rate limiter becomes a bottleneck. Different clients run in parallel.
+Rule: max 3 requests in any 1-second window.
+Keep the timestamp of every allowed request.
+New request → first cross out entries older than 1 second,
+              then: fewer than 3 left? allow and write it down. Otherwise deny.
 ```
 
-Lock on the **bucket object**, not on the string key. String keys can have multiple instances — locking on them is unreliable.
+It's exact (no loophole at window edges) but costs memory: it stores up to N timestamps per client, where a bucket stores 2 numbers.
 
----
-
-## Step 1 — Requirements (~5 min)
-
-**Say aloud:**
-> "Rate limiter can mean in-process library or distributed Redis-backed service. Let me clarify scope."
-
-**Four things to confirm:**
-
-| Theme | Question |
-|-------|----------|
-| Scope | "Single-process in-memory? Or distributed across servers?" |
-| Algorithms | "At minimum Token Bucket + Sliding Window Log? More later?" |
-| Response | "Does allow() return boolean, or structured (allowed + remaining + retryAfterMs)?" |
-| Fallback | "Unknown endpoint → default limiter or reject?" |
-
-**Write on the board:**
+### Where it sits
 ```
-Functional Requirements:
-1. allow(clientId, endpoint) → RateLimitResult { allowed, remaining, retryAfterMs }
-2. Per-endpoint configuration: register("/search", new TokenBucketLimiter(100, 10))
-3. Unknown endpoint → fall back to default limiter (never reject for missing config)
-4. Per-client isolation — alice's quota doesn't affect bob's
-5. Thread-safe — multiple threads call allow() concurrently
-
-Out of Scope: distributed/Redis, hot-reload config, metrics, persistence
+request → [ RateLimiter.allow(client, endpoint) ] → ALLOW → handle request
+                                                  → DENY  → HTTP 429 + "Retry-After: X ms"
 ```
 
 ---
 
-## Step 2 — Entities (~4 min)
+## 2. From story to design
 
-**Five things, name them:**
+Each decision: **choice → alternative rejected → why.** This reasoning is what you reuse on new problems.
 
+| # | Decision | Rejected | Why |
+|---|---|---|---|
+| D1 | Core API: `allow(clientId, endpoint) → RateLimitResult` | returning `boolean` | The caller needs `retryAfterMs` for the HTTP `Retry-After` header and `remaining` for `X-RateLimit-Remaining`. |
+| D2 | Algorithm behind a `Limiter` interface (**Strategy**) | one class with `if (algo == "TOKEN")` | 2 algorithms on day 1, and more get asked as follow-ups. A new algorithm is a new class. |
+| D3 | Each limiter owns its own `Map<clientId, state>` | a `Client` class with fields for every algorithm | The state shape differs: a bucket is `(tokens, lastRefill)`, a log is a `Deque<Long>`. Keep it with the algorithm that understands it. |
+| D4 | **Lazy refill** on each request | a background thread topping up every bucket | No wasted work on idle clients, and no timer thread to manage. |
+| D5 | `tokens` is a `double` | `int` | 100 ms at 1 token/s = 0.1 tokens. An `int` rounds this to 0, so the bucket never refills under steady traffic. |
+| D6 | Cap tokens at `capacity` | no cap | A client idle for 10 min would bank 600 tokens, and the burst limit would mean nothing. |
+| D7 | Lock **per client**: `synchronized(bucket)` | `synchronized` method (global lock) / `synchronized(clientId)` | A global lock makes every client wait on every other. Locking a `String` is unreliable: two equal strings can be different objects. |
+| D8 | `ConcurrentHashMap<endpoint, Limiter>` + a default limiter | throwing for an unknown endpoint | An unconfigured endpoint should still be protected, not crash. The map is read by many threads, so it's concurrent. |
+| D9 | Inject `java.time.Clock` | calling `System.currentTimeMillis()` directly | Tests can move time forward instantly instead of `Thread.sleep`. |
+| D10 | **Not** classes: `Client`, `Request`, `Endpoint` | modelling them | They have no behaviour or state of their own. They're just strings. |
+
+### Class shape
 ```
-RateLimiter          orchestrator + facade — the only class callers touch
-LimiterFactory       creates the right Limiter from raw config data
-Limiter              Strategy interface — allow(clientId) → RateLimitResult
-TokenBucketLimiter   concrete algorithm #1
-SlidingWindowLog     concrete algorithm #2
-RateLimitResult      value object — (allowed, remaining, retryAfterMs)
-```
+RateLimiter                          ← the service callers use
+  Map<String endpoint, Limiter>
+  Limiter defaultLimiter
+  allow(clientId, endpoint) → picks limiter → limiter.allow(clientId)
 
-**Why `LimiterFactory`?**
-> "Config arrives as raw JSON — `{ algorithm: 'TokenBucket', algoConfig: { capacity: 100, ... } }`. Something needs to read the algorithm discriminator and call the right constructor. That's the factory. Without it, that switch lives inside `RateLimiter` which violates single responsibility."
+«interface» Limiter                  ← Strategy
+  RateLimitResult allow(String clientId)
+     ├── TokenBucketLimiter        Map<clientId, Bucket{double tokens; long lastRefillTime}>
+     └── SlidingWindowLogLimiter   Map<clientId, Deque<Long> timestamps>
 
-**Relationships:**
-```
-RateLimiter  --uses-->  LimiterFactory at construction time
-RateLimiter  --owns-->  Map<String, Limiter>   (endpoint → limiter)
-RateLimiter  --owns-->  Limiter defaultLimiter
-Each Limiter --owns-->  ConcurrentHashMap<String, PerKeyState>
+RateLimitResult { boolean allowed; int remaining; Long retryAfterMs /* null if allowed */ }
 ```
 
 ---
 
-## Step 3 — Class Design (~10 min)
+## 3. Patterns that earn their place
 
-### RateLimiter
+| Pattern | In the base? | Problem it solves here | Without it |
+|---|---|---|---|
+| **Strategy** (`Limiter`) | **Yes** | Token Bucket and Sliding Window are different algorithms answering the same `allow()` question | a growing `if/else` in `RateLimiter`; every new algorithm edits the class that runs on every request |
+| **Factory** | **No.** Follow-up Q5, only if limits come from a config file | turns `{"algorithm": "TOKEN_BUCKET", ...}` into the right `Limiter` | nothing goes wrong when limits are hard-coded: `new TokenBucketLimiter(10, 1)` is fine |
+| **Decorator** | **No.** Follow-up Q10 | adds metrics/logging around any limiter without editing it | counters copied into every limiter class |
 
-```java
-public class RateLimiter {
-    private final Map<String, Limiter> limiters = new HashMap<>();
-    private final Limiter defaultLimiter;
+**Strategy vs Factory isn't a choice; they do different jobs.** Strategy is *how* a request is limited (runs on every request). Factory is *which* limiter object gets created (runs once at startup). Factory creates a Strategy, so you only need it when an algorithm *name* arrives as text.
 
-    // Config-driven constructor — takes raw JSON-like config, delegates creation to factory
-    public RateLimiter(List<Map<String, Object>> configs, Map<String, Object> defaultConfig) {
-        LimiterFactory factory = new LimiterFactory();
-        for (Map<String, Object> config : configs) {
-            String endpoint = (String) config.get("endpoint");
-            if (endpoint == null) continue;
-            limiters.put(endpoint, factory.create(config));
-        }
-        this.defaultLimiter = factory.create(defaultConfig);
-    }
+**Say:** *"Two algorithms with the same `allow()` contract, so Strategy. A new algorithm is a new class; `RateLimiter` never changes."*
 
-    public RateLimitResult allow(String clientId, String endpoint) {
-        Limiter limiter = limiters.getOrDefault(endpoint, defaultLimiter);
-        return limiter.allow(clientId);
-    }
-}
+`RateLimiter` is also a Facade (the one service class callers use). No need to name it.
+
+**Tempting but wrong here:**
+- **State:** a bucket doesn't behave differently in different "states"; it's just numbers.
+- **Singleton:** one instance is fine, but create it once and inject it. `getInstance()` makes tests share state.
+- **Observer:** nothing needs to react to "a request was allowed".
+
+---
+
+## 4. The 35-minute Amazon run
+
+### Clarify (min 0–4)
+> **You:** Is this in-process, inside one service, or a distributed limiter shared by many servers?
+> **Interviewer:** Start in-process. We may talk distributed later.
+> **You:** Which algorithms? I'd do Token Bucket and Sliding Window Log.
+> **Interviewer:** Good.
+> **You:** Limits per endpoint, per client? And what if an endpoint has no config?
+> **Interviewer:** Per endpoint, per client. Unknown endpoint gets a default.
+> **You:** Should a denial tell the client when to retry?
+> **Interviewer:** Yes.
+
+```
+In scope:  allow(clientId, endpoint) → {allowed, remaining, retryAfterMs}
+           per-endpoint limiter + default · per-client isolation · thread-safe
+           Token Bucket + Sliding Window Log
+Out:       distributed, config files, metrics, persistence
 ```
 
-### LimiterFactory
+### Timeline
+| Min | Do |
+|---|---|
+| 4–8 | Write the class shape above. Say the crux: *"Refill math done lazily, and per-client locking."* Say *"Strategy."* |
+| 8–10 | Code step 1: `Limiter` + `RateLimitResult`. |
+| 10–22 | Code step 2: **`TokenBucketLimiter` in full.** This is the class they judge you on. |
+| 22–25 | Code step 3: `RateLimiter` (~15 lines). |
+| 25–29 | Code step 4: `SlidingWindowLogLimiter`. Skip it if you're behind; describe it in words instead. |
+| 29–32 | Dry-run the token bucket out loud. Point at the lock. |
+| 32–35 | Follow-ups. |
 
-```java
-public class LimiterFactory {
-    public Limiter create(Map<String, Object> externalConfig) {
-        String algorithm = (String) externalConfig.get("algorithm");
-        Map<String, Object> algoConfig = (Map<String, Object>) externalConfig.get("algoConfig");
+**Short on time?** Drop the `Clock` and call `System.currentTimeMillis()`, then say *"I'd inject a Clock so tests can control time."* You keep the signal and save 2 minutes.
 
-        switch (algorithm) {
-            case "TokenBucket":
-                return new TokenBucketLimiter(
-                        (int) algoConfig.get("capacity"),
-                        (int) algoConfig.get("refillRatePerSecond"));
-            case "SlidingWindowLog":
-                return new SlidingWindowLogLimiter(
-                        (int) algoConfig.get("maxRequests"),
-                        ((Number) algoConfig.get("windowMs")).longValue());
-            default:
-                throw new IllegalArgumentException("Unknown algorithm: " + algorithm);
-        }
-    }
-}
-```
+### The code you write, in this order
 
-New algorithm = new class + one new `case`. `RateLimiter` and all existing algorithms never change.
-
-### Limiter (Strategy interface)
-
+**Step 1: the Strategy interface + the result** ([algorithm/Limiter.java](algorithm/Limiter.java), [model/RateLimitResult.java](model/RateLimitResult.java))
 ```java
 public interface Limiter {
     RateLimitResult allow(String clientId);
 }
-```
 
-### TokenBucketLimiter — outline
-
-```java
-public class TokenBucketLimiter implements Limiter {
-    private final int capacity;
-    private final int refillRatePerSecond;
-    private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
-
-    public RateLimitResult allow(String clientId) {
-        Bucket bucket = buckets.computeIfAbsent(clientId,
-                k -> new Bucket(capacity, clock.millis()));
-        synchronized (bucket) {  // per-KEY lock
-            // refill → check → consume → return  (see Step 4)
-        }
-    }
-
-    static class Bucket { double tokens; long lastRefillTime; }
-}
-```
-
-### SlidingWindowLogLimiter — outline
-
-```java
-public class SlidingWindowLogLimiter implements Limiter {
-    private final int maxRequests;
-    private final long windowMs;
-    private final ConcurrentHashMap<String, Deque<Long>> logs = new ConcurrentHashMap<>();
-
-    public RateLimitResult allow(String clientId) {
-        Deque<Long> log = logs.computeIfAbsent(clientId, k -> new ArrayDeque<>());
-        synchronized (log) {
-            // evict stale → check → record → return  (see Step 4)
-        }
-    }
-}
-```
-
-### RateLimitResult
-
-```java
 public class RateLimitResult {
     private final boolean allowed;
     private final int remaining;
-    private final Long retryAfterMs;  // null when allowed
+    private final Long retryAfterMs;                 // null when allowed
 
-    public static RateLimitResult allow(int remaining)    { return new RateLimitResult(true,  remaining, null); }
+    private RateLimitResult(boolean allowed, int remaining, Long retryAfterMs) {
+        this.allowed = allowed;
+        this.remaining = remaining;
+        this.retryAfterMs = retryAfterMs;
+    }
+
+    public static RateLimitResult allow(int remaining)    { return new RateLimitResult(true, remaining, null); }
     public static RateLimitResult deny(long retryAfterMs) { return new RateLimitResult(false, 0, retryAfterMs); }
-    // getters
+
+    public boolean isAllowed() { return allowed; }
 }
 ```
 
-**Patterns to name here:**
-- **Strategy** — `Limiter` interface. Different algorithms swap in without touching `RateLimiter` or `LimiterFactory`.
-- **Facade** — `RateLimiter` is the only class callers touch.
-- **Factory** — `LimiterFactory` centralises creation logic; callers never `new TokenBucketLimiter(...)` directly.
-
----
-
-## Step 4 — Implementation (~18 min)
-
-### 4.1 TokenBucketLimiter.allow() — write this in full
-
+**Step 2: Token Bucket, the crux** ([algorithm/TokenBucketLimiter.java](algorithm/TokenBucketLimiter.java))
 ```java
-@Override
-public RateLimitResult allow(String clientId) {
-    Bucket bucket = buckets.computeIfAbsent(clientId,
-            k -> new Bucket(capacity, clock.millis()));
+public class TokenBucketLimiter implements Limiter {
 
-    synchronized (bucket) {
-        long now = clock.millis();
-        long elapsedMs = now - bucket.lastRefillTime;
-
-        double tokensToAdd = (elapsedMs * refillRatePerSecond) / 1000.0;
-        bucket.tokens = Math.min(capacity, bucket.tokens + tokensToAdd);  // cap!
-        bucket.lastRefillTime = now;
-
-        if (bucket.tokens >= 1.0) {
-            bucket.tokens -= 1.0;
-            return RateLimitResult.allow((int) Math.floor(bucket.tokens));
-        }
-
-        long retryAfterMs = (long) Math.ceil((1.0 - bucket.tokens) * 1000.0 / refillRatePerSecond);
-        return RateLimitResult.deny(retryAfterMs);
-    }
-}
-```
-
-**Say while writing:**
-1. *"First-time client gets a full bucket — `new Bucket(capacity, now)`. First request always succeeds."*
-2. *"`computeIfAbsent` is atomic — two threads can't both create a bucket for the same new client."*
-3. *"Lazy refill — compute tokens owed since last touch. No background thread, no work on idle clients."*
-4. *"Cap at capacity — idle client shouldn't bank unlimited tokens."*
-5. *"`ceil` on retryAfterMs — never tell client to retry too soon."*
-
-### 4.2 SlidingWindowLogLimiter.allow() — sketch this
-
-```java
-@Override
-public RateLimitResult allow(String clientId) {
-    Deque<Long> log = logs.computeIfAbsent(clientId, k -> new ArrayDeque<>());
-    synchronized (log) {
-        long now = clock.millis();
-        long cutoff = now - windowMs;
-
-        while (!log.isEmpty() && log.peekFirst() < cutoff) {
-            log.pollFirst();  // evict stale timestamps from front
-        }
-
-        if (log.size() < maxRequests) {
-            log.addLast(now);
-            return RateLimitResult.allow(maxRequests - log.size());
-        }
-
-        long retryAfterMs = log.peekFirst() + windowMs - now;
-        return RateLimitResult.deny(retryAfterMs);
-    }
-}
-```
-
-**Say:** *"ArrayDeque for O(1) front eviction. Eviction is lazy — happens on each allow(), not on a timer."*
-
-### 4.3 Dry-run (do this at the board)
-
-```
-TokenBucket: capacity=5, refillRatePerSecond=1, clock frozen at t=0
-
-allow("alice") — first call:
-  new Bucket(tokens=5, lastRefillTime=0)
-  elapsedMs=0, tokensToAdd=0, tokens=5
-  5 >= 1 → tokens=4, return ALLOW(remaining=4)  ✓
-
-allow("alice") x4 more (clock still frozen):
-  elapsedMs=0, no refill. tokens: 3 → 2 → 1 → 0
-  return ALLOW(3), ALLOW(2), ALLOW(1), ALLOW(0)  ✓
-
-allow("alice") — 6th, tokens=0:
-  0 >= 1 → false
-  tokensNeeded=1.0, retryAfterMs = ceil(1000/1) = 1000
-  return DENY(retryAfterMs=1000)  ✓
-
-clock.advanceMs(1500):
-  elapsedMs=1500, tokensToAdd=1.5, tokens=min(5, 0+1.5)=1.5
-  1.5 >= 1 → tokens=0.5, return ALLOW(remaining=0)  ✓
-  (floor(0.5) = 0 — can't make half a request)
-```
-
----
-
-## Step 5 — Extensibility (~7 min)
-
-### E1. "Add a new algorithm — say, Fixed Window Counter"
-
-**What it is:** count requests in fixed time slots (e.g. 0–1s, 1–2s). Reset counter at window boundary.
-
-**Why Strategy makes this a one-liner:**
-
-```java
-public class FixedWindowLimiter implements Limiter {
-    private final int maxRequests;
-    private final long windowMs;
+    private final int capacity;
+    private final int refillRatePerSecond;
     private final Clock clock;
-    private final ConcurrentHashMap<String, long[]> windows = new ConcurrentHashMap<>();
-    //                                                          [0]=count, [1]=windowStart
+    private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
+
+    public TokenBucketLimiter(int capacity, int refillRatePerSecond, Clock clock) {
+        this.capacity = capacity;
+        this.refillRatePerSecond = refillRatePerSecond;
+        this.clock = clock;
+    }
 
     @Override
     public RateLimitResult allow(String clientId) {
-        long[] w = windows.computeIfAbsent(clientId, k -> new long[]{0, clock.millis()});
-        synchronized (w) {
+        // atomic: two threads can't both create a bucket for a new client
+        Bucket bucket = buckets.computeIfAbsent(clientId, k -> new Bucket(capacity, clock.millis()));
+
+        synchronized (bucket) {                              // per-client lock
             long now = clock.millis();
-            if (now - w[1] >= windowMs) { w[0] = 0; w[1] = now; }  // new window
-            if (w[0] < maxRequests) {
-                w[0]++;
-                return RateLimitResult.allow(maxRequests - (int) w[0]);
+            long elapsedMs = now - bucket.lastRefillTime;
+
+            // lazy refill: add what would have dripped in since last time, capped
+            double tokensToAdd = (elapsedMs * refillRatePerSecond) / 1000.0;
+            bucket.tokens = Math.min(capacity, bucket.tokens + tokensToAdd);
+            bucket.lastRefillTime = now;
+
+            if (bucket.tokens >= 1.0) {
+                bucket.tokens -= 1.0;
+                return RateLimitResult.allow((int) Math.floor(bucket.tokens));
             }
-            return RateLimitResult.deny(w[1] + windowMs - now);
+            // time until 1 full token exists; ceil so the client never retries too early
+            long retryAfterMs = (long) Math.ceil((1.0 - bucket.tokens) * 1000.0 / refillRatePerSecond);
+            return RateLimitResult.deny(retryAfterMs);
+        }
+    }
+
+    static class Bucket {                                    // mutable per-client state
+        double tokens;
+        long lastRefillTime;
+
+        Bucket(double tokens, long lastRefillTime) {
+            this.tokens = tokens;
+            this.lastRefillTime = lastRefillTime;
         }
     }
 }
 ```
+**Shape to remember: get-or-create → lock → refill → cap → consume or compute retry.**
 
-Zero changes to `RateLimiter`. Just `rl.register("/api", new FixedWindowLimiter(100, 1000L, clock))`.
+**Step 3: the service** ([RateLimiter.java](RateLimiter.java))
+```java
+public class RateLimiter {
 
-**Tradeoff to mention:** Fixed Window has a "boundary burst" problem — a client can use 100 requests in the last 500ms of window 1, then 100 more in the first 500ms of window 2, effectively getting 200 in 1 second. SlidingWindowLog avoids this; Token Bucket partially avoids it.
+    private final Map<String, Limiter> limiters = new ConcurrentHashMap<>();
+    private final Limiter defaultLimiter;
+
+    public RateLimiter(Limiter defaultLimiter) {
+        this.defaultLimiter = defaultLimiter;
+    }
+
+    public void register(String endpoint, Limiter limiter) {
+        limiters.put(endpoint, limiter);
+    }
+
+    public RateLimitResult allow(String clientId, String endpoint) {
+        Limiter limiter = limiters.getOrDefault(endpoint, defaultLimiter);
+        return limiter.allow(clientId);                      // Strategy: we don't know or care which algorithm
+    }
+}
+```
+
+**Step 4: second algorithm, if time allows** ([algorithm/SlidingWindowLogLimiter.java](algorithm/SlidingWindowLogLimiter.java))
+```java
+public class SlidingWindowLogLimiter implements Limiter {
+
+    private final int maxRequests;
+    private final long windowMs;
+    private final Clock clock;
+    private final ConcurrentHashMap<String, Deque<Long>> logs = new ConcurrentHashMap<>();
+
+    public SlidingWindowLogLimiter(int maxRequests, long windowMs, Clock clock) {
+        this.maxRequests = maxRequests;
+        this.windowMs = windowMs;
+        this.clock = clock;
+    }
+
+    @Override
+    public RateLimitResult allow(String clientId) {
+        Deque<Long> log = logs.computeIfAbsent(clientId, k -> new ArrayDeque<>());
+
+        synchronized (log) {
+            long now = clock.millis();
+            long cutoff = now - windowMs;
+            while (!log.isEmpty() && log.peekFirst() <= cutoff) {   // evict timestamps outside the window
+                log.pollFirst();
+            }
+            if (log.size() < maxRequests) {
+                log.addLast(now);
+                return RateLimitResult.allow(maxRequests - log.size());
+            }
+            return RateLimitResult.deny(log.peekFirst() + windowMs - now);   // when the oldest ages out
+        }
+    }
+}
+```
+**`<=` not `<`:** a request made exactly `windowMs` ago is outside the window. With `<`, the `retryAfterMs` you return would be 1 ms too early, and the client retrying on time would be denied again.
+
+**Demo, only if they ask to see it run:**
+```java
+RateLimiter rl = new RateLimiter(new TokenBucketLimiter(10, 1, Clock.systemUTC()));
+rl.register("/upload", new SlidingWindowLogLimiter(2, 60_000, Clock.systemUTC()));
+for (int i = 0; i < 3; i++) System.out.println(rl.allow("alice", "/upload"));
+// ALLOW(remaining=1)  ALLOW(remaining=0)  DENY(retryAfterMs≈60000)
+```
+
+### Dry run (capacity 5, refill 1/s, time frozen at 0)
+```
+req 1      new Bucket(5, t=0) → 5 ≥ 1 → tokens 4 → ALLOW(remaining 4)
+req 2..5   no time passed → 3, 2, 1, 0         → ALLOW(3), (2), (1), (0)
+req 6      tokens 0 → retry = ceil(1.0 × 1000 / 1) → DENY(retryAfterMs 1000)
+t=1500     +1.5 tokens → 1.5 → consume → 0.5    → ALLOW(remaining 0)   floor(0.5)=0
+```
+
+### "Which algorithm would you pick?" They will ask.
+| Algorithm | Idea | Memory per client | Weakness |
+|---|---|---|---|
+| **Fixed Window Counter** | count per clock-minute, reset at :00 | O(1) | **edge burst:** 100 at 0:59 + 100 at 1:00 = 200 in 2 seconds |
+| **Sliding Window Log** | keep every timestamp | O(N) | memory heavy at high limits |
+| **Sliding Window Counter** | `prevCount × (fraction of previous window still inside) + currCount` | O(1) | approximate (assumes even spread). The usual production pick. |
+| **Token Bucket** | jar + tap | O(1) | allows bursts up to `capacity` (usually a feature) |
+| **Leaky Bucket** | queue drained at a fixed rate | O(queue) | no bursts at all, adds latency |
+
+> *"Token Bucket by default: O(1), burst-friendly, simple. Sliding Window Log when the limit must be exact. Sliding Window Counter when memory matters at scale."*
 
 ---
 
-### E2. "Config comes from YAML / JSON at startup"
+## 5. Follow-ups: answer out loud first, then open
 
-**The pattern:** add a `LimiterFactory` with a switch on an algorithm discriminator string.
+Most likely first: Q1, Q2, Q3/Q4. Notice how most answers are **"a new class implementing `Limiter`"**. That's the Strategy payoff, so say it.
+
+<details>
+<summary><b>Q1. Two requests from the same client arrive at the same instant. What happens?</b></summary>
+
+Both call `computeIfAbsent` and get the **same** `Bucket` (it's atomic, so only one bucket is created). Both reach `synchronized(bucket)`; one waits. The first sees 1 token and consumes it; the second sees 0 and is denied.
+
+Without the lock:
+```
+Thread A: reads tokens = 1          Thread B: reads tokens = 1
+Thread A: 1 ≥ 1 → tokens = 0        Thread B: 1 ≥ 1 → tokens = 0
+→ both ALLOWED with 1 token: the classic check-then-act race
+```
+Different clients have different bucket objects, so they never wait on each other. Proof: the driver's 50-thread test with capacity 10 gives exactly 10 allowed.
+</details>
+
+<details>
+<summary><b>Q2. Make it distributed: 10 API servers behind a load balancer.</b></summary>
+
+**Problem:** each server has its own in-memory buckets, so a client gets 10× the limit.
+**Fix:** move the bucket to **Redis**, with the refill-check-consume as a **Lua script**. Redis runs a script without interleaving other commands, so the script is the lock. It's just another Strategy, and `RateLimiter` doesn't change.
+
+```java
+// sketch: needs a Redis client such as Jedis
+public class RedisTokenBucketLimiter implements Limiter {
+
+    private static final String SCRIPT = """
+        local capacity = tonumber(ARGV[1])
+        local rate     = tonumber(ARGV[2])
+        local t   = redis.call('TIME')                              -- Redis's clock, not the app server's
+        local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        local b      = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+        local tokens = tonumber(b[1]) or capacity                   -- new client: full bucket
+        local ts     = tonumber(b[2]) or now
+        tokens = math.min(capacity, tokens + (now - ts) * rate / 1000)
+        local allowed, retry = 0, math.ceil((1 - tokens) * 1000 / rate)
+        if tokens >= 1 then tokens = tokens - 1; allowed = 1; retry = 0 end
+        redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)
+        redis.call('PEXPIRE', KEYS[1], math.ceil(capacity * 1000 / rate) * 2)   -- idle keys disappear
+        return {allowed, math.floor(tokens), retry}
+        """;
+
+    private final Jedis redis;
+    private final String endpoint;                        // part of the key
+    private final int capacity;
+    private final int refillRatePerSecond;
+
+    public RedisTokenBucketLimiter(Jedis redis, String endpoint, int capacity, int refillRatePerSecond) {
+        this.redis = redis;
+        this.endpoint = endpoint;
+        this.capacity = capacity;
+        this.refillRatePerSecond = refillRatePerSecond;
+    }
+
+    @Override
+    public RateLimitResult allow(String clientId) {
+        @SuppressWarnings("unchecked")
+        List<Long> r = (List<Long>) redis.eval(SCRIPT,
+                List.of("rl:" + endpoint + ":" + clientId),
+                List.of(String.valueOf(capacity), String.valueOf(refillRatePerSecond)));
+        return r.get(0) == 1L ? RateLimitResult.allow(r.get(1).intValue())
+                              : RateLimitResult.deny(r.get(2));
+    }
+}
+```
+**Points that show depth:**
+- **Same algorithm**, now in Lua. The script being atomic replaces `synchronized(bucket)`.
+- **Clock skew:** app servers' clocks differ, so use Redis `TIME` inside the script.
+- **TTL** on every key, so idle clients don't fill Redis (that's Q6, solved for free).
+- **Cost:** +1 network hop per request (~1 ms). Redis down → fail-open (Q7).
+- **Cheaper alternative:** each server keeps a local limiter at `limit / N`. No network hop, but inaccurate when the load balancer spreads traffic unevenly.
+</details>
+
+<details>
+<summary><b>Q3. Add a Fixed Window Counter algorithm.</b></summary>
+
+A new class, registered for an endpoint. **Zero changes** to `RateLimiter` or the existing limiters (Open/Closed). It uses the same `computeIfAbsent` + `synchronized` pattern.
+
+```java
+public class FixedWindowLimiter implements Limiter {
+
+    private final int maxRequests;
+    private final long windowMs;
+    private final Clock clock;
+    private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
+
+    public FixedWindowLimiter(int maxRequests, long windowMs, Clock clock) {
+        this.maxRequests = maxRequests;
+        this.windowMs = windowMs;
+        this.clock = clock;
+    }
+
+    @Override
+    public RateLimitResult allow(String clientId) {
+        Window w = windows.computeIfAbsent(clientId, k -> new Window());
+        synchronized (w) {
+            long now = clock.millis();
+            long windowStart = now - (now % windowMs);      // e.g. start of the current minute
+            if (windowStart != w.start) {                   // a new window began: reset
+                w.start = windowStart;
+                w.count = 0;
+            }
+            if (w.count < maxRequests) {
+                w.count++;
+                return RateLimitResult.allow(maxRequests - w.count);
+            }
+            return RateLimitResult.deny(windowStart + windowMs - now);   // until the next window
+        }
+    }
+
+    static class Window { long start = -1; int count; }
+}
+// usage
+rl.register("/login", new FixedWindowLimiter(5, 60_000, clock));
+```
+**Mention the weakness:** 5 requests at 0:59 plus 5 at 1:00 gives 10 in 2 seconds (edge burst).
+</details>
+
+<details>
+<summary><b>Q4. "Fix the edge burst without storing every timestamp." (Sliding Window Counter)</b></summary>
+
+Keep **two counters**, the previous and current fixed windows, and **estimate** the sliding count:
+```
+estimate = prevCount × (fraction of the previous window still inside the last windowMs) + currCount
+
+limit 10/sec. Previous second had 10 requests. Now we're 0.5 s into the current second, with 2 requests.
+estimate = 10 × 0.5 + 2 = 7  → 3 more allowed
+```
+```java
+public class SlidingWindowCounterLimiter implements Limiter {
+
+    private final int maxRequests;
+    private final long windowMs;
+    private final Clock clock;
+    private final ConcurrentHashMap<String, Counter> counters = new ConcurrentHashMap<>();
+
+    public SlidingWindowCounterLimiter(int maxRequests, long windowMs, Clock clock) {
+        this.maxRequests = maxRequests;
+        this.windowMs = windowMs;
+        this.clock = clock;
+    }
+
+    @Override
+    public RateLimitResult allow(String clientId) {
+        Counter c = counters.computeIfAbsent(clientId, k -> new Counter());
+        synchronized (c) {
+            long now = clock.millis();
+            long windowStart = now - (now % windowMs);
+            if (windowStart != c.windowStart) {
+                // the old window counts as "previous" only if it is the one right before this one
+                c.prevCount = (windowStart - c.windowStart == windowMs) ? c.currCount : 0;
+                c.currCount = 0;
+                c.windowStart = windowStart;
+            }
+            // fraction of the previous window still inside the sliding window that ends now
+            double prevWeight = (double) (windowMs - (now - windowStart)) / windowMs;
+            double estimated = c.prevCount * prevWeight + c.currCount;
+
+            if (estimated + 1 <= maxRequests) {
+                c.currCount++;
+                return RateLimitResult.allow((int) (maxRequests - estimated - 1));
+            }
+            // approximate: by the next window the estimate has dropped (say this out loud)
+            return RateLimitResult.deny(windowStart + windowMs - now);
+        }
+    }
+
+    static class Counter { long windowStart = -1; int prevCount; int currCount; }
+}
+```
+**Say:** *"O(1) memory like Fixed Window, nearly as smooth as the log. It assumes the previous window's requests were spread evenly, which is why it's an estimate."*
+</details>
+
+<details>
+<summary><b>Q5. "Limits come from a config file." (this is where Factory comes in)</b></summary>
+
+Config arrives as text with an algorithm **name**. Something must map that name to a class: that's the Factory. It **creates** Strategies; `RateLimiter` and the limiters don't change.
 
 ```java
 public class LimiterFactory {
-    public Limiter create(String algorithm, Map<String, Object> config, Clock clock) {
+
+    private final Clock clock;
+
+    public LimiterFactory(Clock clock) { this.clock = clock; }
+
+    // config example: {"algorithm": "TOKEN_BUCKET", "capacity": 10, "refillRatePerSecond": 2}
+    public Limiter create(Map<String, Object> config) {
+        String algorithm = (String) config.get("algorithm");
         switch (algorithm) {
-            case "TokenBucket":
+            case "TOKEN_BUCKET":
                 return new TokenBucketLimiter(
-                        (int) config.get("capacity"),
-                        (int) config.get("refillRatePerSecond"), clock);
-            case "SlidingWindowLog":
+                        ((Number) config.get("capacity")).intValue(),
+                        ((Number) config.get("refillRatePerSecond")).intValue(), clock);
+            case "SLIDING_WINDOW_LOG":
                 return new SlidingWindowLogLimiter(
-                        (int) config.get("maxRequests"),
+                        ((Number) config.get("maxRequests")).intValue(),
                         ((Number) config.get("windowMs")).longValue(), clock);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + algorithm);
         }
     }
 }
+// at startup
+LimiterFactory factory = new LimiterFactory(Clock.systemUTC());
+RateLimiter rl = new RateLimiter(factory.create(defaultConfig));
+for (Map<String, Object> cfg : endpointConfigs) {
+    rl.register((String) cfg.get("endpoint"), factory.create(cfg));
+}
 ```
+- **Why `(Number)`:** JSON parsers may give an `Integer` or a `Long`; `Number` handles both.
+- **New algorithm** = new `Limiter` class + one `case`. The `switch` lives in one place only.
+</details>
 
-**What to say:** *"Strategy + Factory is the seam. Adding a new algorithm = new Limiter class + one new switch case. Zero changes to RateLimiter or any existing algorithm."*
+<details>
+<summary><b>Q6. Memory keeps growing: millions of clients.</b></summary>
 
----
+The per-client maps never shrink. Add a sweeper to `TokenBucketLimiter` that removes idle buckets:
+```java
+private static final long IDLE_TTL_MS = 30 * 60 * 1000L;
+private final ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor();
 
-### E3. "How would you make it distributed (multiple servers)?"
+// in the constructor
+sweeper.scheduleAtFixedRate(this::evictIdle, 1, 1, TimeUnit.MINUTES);
 
-**The problem:** each server has its own in-memory buckets. A client hitting server A and server B each gets their own quota — effectively double the limit.
+private void evictIdle() {
+    long cutoff = clock.millis() - IDLE_TTL_MS;
+    buckets.entrySet().removeIf(e -> {
+        Bucket b = e.getValue();
+        synchronized (b) { return b.lastRefillTime < cutoff; }   // read under the bucket's lock
+    });
+}
+```
+- **Why eviction is invisible:** pick a TTL ≥ the time to refill a full bucket (`capacity / rate`). An evicted client would have had a full bucket anyway, and comes back to a new full one.
+- **Sliding Window Log is worse:** a limit of 1000/min × 1M clients = 1 billion `Long`s, many GB. At that scale use Sliding Window Counter (2 numbers per client).
+- **In Redis (Q2):** the key TTL does this for free.
+</details>
 
-**The fix:** `RedisTokenBucketLimiter implements Limiter` — same interface, Redis as the state store.
+<details>
+<summary><b>Q7. What if the limiter itself throws, or Redis is down?</b></summary>
+
+A product decision. Say both options and pick one:
+- **Fail-open** (allow on error): a limiter bug never takes down the API. Usual choice for API gateways.
+- **Fail-closed** (deny on error): for abuse-sensitive endpoints, like login or OTP.
 
 ```java
-// Lua script runs atomically on Redis — no race between read and write
-String LUA_SCRIPT =
-    "local tokens = tonumber(redis.call('GET', KEYS[1]) or ARGV[1]) " +
-    "local now = tonumber(ARGV[2]) " +
-    // ... refill math, cap, consume, return ...
-    "redis.call('SET', KEYS[1], tokens) " +
-    "return tokens";
-```
-
-**What to say:** *"Same `Limiter` interface — `RateLimiter.allow()` is unchanged. The only new thing is `RedisTokenBucketLimiter`. The Lua script is critical — it makes the read-refill-write atomic on Redis without needing a distributed lock."*
-
----
-
-### E4. "Memory grows unbounded with millions of clients"
-
-**The problem:** every new `clientId` creates a Bucket that lives forever. With 10M unique IPs, OOM.
-
-**The fix:** background eviction sweeper.
-
-```java
-// in TokenBucketLimiter constructor
-ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor();
-sweeper.scheduleAtFixedRate(() -> {
-    long cutoff = clock.millis() - TimeUnit.MINUTES.toMillis(30);
-    buckets.entrySet().removeIf(e -> e.getValue().lastRefillTime < cutoff);
-}, 1, 1, TimeUnit.MINUTES);
-```
-
-**What happens to evicted clients?** Next request looks like first-time → fresh full bucket. Fine — they were inactive by definition.
-
-**Alternative:** bounded LRU cache. When at capacity, evict least-recently-used entry.
-
----
-
-### E5. "Different limits for premium vs free users (per-client tier overrides)"
-
-**The fix:** two-tier lookup in `RateLimiter`.
-
-```java
-public class RateLimiter {
-    private final Map<String, Limiter> limiters = new HashMap<>();          // endpoint → limiter
-    private final Map<String, Limiter> overrides = new HashMap<>();         // clientId:endpoint → limiter
-    private final Limiter defaultLimiter;
-
-    public void registerOverride(String clientId, String endpoint, Limiter limiter) {
-        overrides.put(clientId + ":" + endpoint, limiter);
-    }
-
-    public RateLimitResult allow(String clientId, String endpoint) {
-        Limiter limiter = overrides.getOrDefault(clientId + ":" + endpoint,
-                          limiters.getOrDefault(endpoint, defaultLimiter));
+public RateLimitResult allow(String clientId, String endpoint) {
+    Limiter limiter = limiters.getOrDefault(endpoint, defaultLimiter);
+    try {
         return limiter.allow(clientId);
+    } catch (Exception e) {                                  // Exception, not Throwable
+        // fail-open: a limiter bug or Redis outage must not take the whole API down
+        System.err.println("Rate limiter failed for " + endpoint + ": " + e.getMessage());
+        return RateLimitResult.allow(0);
     }
 }
 ```
+In production, also increment an error metric and alarm on it. Silent fail-open means no rate limiting and nobody knows.
+</details>
 
-**What to say:** *"Premium users get a per-client override registered at login. Free users hit the endpoint-level limiter. Unknown endpoint falls back to default. Three tiers, two map lookups."*
+<details>
+<summary><b>Q8. Premium users get higher limits than free users.</b></summary>
 
----
-
-### E6. "Add metrics — count allow/deny per endpoint"
-
-**The pattern:** Decorator. Wrap each registered Limiter without touching its code.
-
+Look up `tier:endpoint` first, then fall back to the endpoint, then the default. The tier comes from the authenticated request. The algorithm classes don't change.
 ```java
-public class MeteredLimiter implements Limiter {
-    private final Limiter delegate;
-    private final AtomicLong allowed = new AtomicLong();
-    private final AtomicLong denied  = new AtomicLong();
+public RateLimitResult allow(String clientId, String tier, String endpoint) {
+    Limiter limiter = limiters.get(tier + ":" + endpoint);           // e.g. "PREMIUM:/search"
+    if (limiter == null) limiter = limiters.getOrDefault(endpoint, defaultLimiter);
+    return limiter.allow(clientId);
+}
+// setup
+rl.register("/search", new TokenBucketLimiter(10, 1, clock));            // free
+rl.register("PREMIUM:/search", new TokenBucketLimiter(100, 10, clock));  // premium
+```
+</details>
 
-    public MeteredLimiter(Limiter delegate) { this.delegate = delegate; }
+<details>
+<summary><b>Q9. Some endpoints are expensive: <code>/ml-inference</code> should cost 10 tokens.</b></summary>
 
-    @Override
-    public RateLimitResult allow(String clientId) {
-        RateLimitResult r = delegate.allow(clientId);
-        if (r.isAllowed()) allowed.incrementAndGet();
-        else               denied.incrementAndGet();
-        return r;
-    }
-
-    public long getAllowed() { return allowed.get(); }
-    public long getDenied()  { return denied.get(); }
+Add a `cost` parameter. A `default` method keeps every existing caller working:
+```java
+public interface Limiter {
+    RateLimitResult allow(String clientId, int cost);
+    default RateLimitResult allow(String clientId) { return allow(clientId, 1); }
 }
 ```
-
-Usage: `rl.register("/search", new MeteredLimiter(new TokenBucketLimiter(100, 10, clock)))`.
-
-Stackable — wrap with logging, tracing, or circuit-breaking decorators independently.
-
----
-
-### E7. "Expensive endpoints should cost more tokens"
-
-**The fix:** extend `allow()` with a cost parameter.
-
+In `TokenBucketLimiter`, only the "1" becomes `cost`:
 ```java
-// On Limiter interface
-RateLimitResult allow(String clientId, int cost);
-
-// In TokenBucketLimiter
+if (cost > capacity) throw new IllegalArgumentException("cost " + cost + " > capacity " + capacity);
+// ... same refill code ...
 if (bucket.tokens >= cost) {
     bucket.tokens -= cost;
     return RateLimitResult.allow((int) Math.floor(bucket.tokens));
@@ -534,139 +596,115 @@ if (bucket.tokens >= cost) {
 long retryAfterMs = (long) Math.ceil((cost - bucket.tokens) * 1000.0 / refillRatePerSecond);
 return RateLimitResult.deny(retryAfterMs);
 ```
+**Catch the edge case:** if `cost > capacity`, the request can *never* succeed. Reject it up front instead of telling the client to retry forever.
+</details>
 
-`/search` costs 1 token; `/ml-inference` costs 10. Same bucket, different consumption.
+<details>
+<summary><b>Q10. Count allows and denies per endpoint without touching any limiter class.</b></summary>
 
----
-
-### E8. "What if the rate limiter itself crashes / throws?"
-
-**Fail-open vs fail-closed — this is a values question, not a code question.**
-
-- **Fail-open** (return ALLOW on exception): never block legitimate traffic due to limiter bugs. Risk: limits don't hold during failures.
-- **Fail-closed** (return DENY on exception): strict protection. Risk: takes down traffic when rate limiter is unhealthy.
-
-Most API gateways choose **fail-open** — a rate limiter outage shouldn't cause a full service outage.
-
+**Decorator:** a `Limiter` that wraps another `Limiter`, does the same thing, and also counts.
 ```java
-public RateLimitResult allow(String clientId, String endpoint) {
-    try {
-        Limiter limiter = limiters.getOrDefault(endpoint, defaultLimiter);
-        return limiter.allow(clientId);
-    } catch (Exception e) {
-        log.error("Rate limiter error", e);
-        return RateLimitResult.allow(0);  // fail-open
+public class MeteredLimiter implements Limiter {
+
+    private final Limiter inner;
+    private final AtomicLong allowed = new AtomicLong();
+    private final AtomicLong denied = new AtomicLong();
+
+    public MeteredLimiter(Limiter inner) { this.inner = inner; }
+
+    @Override
+    public RateLimitResult allow(String clientId) {
+        RateLimitResult result = inner.allow(clientId);     // same behaviour...
+        if (result.isAllowed()) allowed.incrementAndGet();  // ...plus counting
+        else denied.incrementAndGet();
+        return result;
     }
+
+    public long getAllowed() { return allowed.get(); }
+    public long getDenied()  { return denied.get(); }
 }
+// usage
+rl.register("/search", new MeteredLimiter(new TokenBucketLimiter(100, 10, clock)));
 ```
+It stacks with other wrappers (logging, tracing), and works around *any* algorithm.
+</details>
 
----
+<details>
+<summary><b>Q11. Change a limit at runtime without restarting.</b></summary>
 
-### E9. Thread Safety — full detail (if interviewer digs in)
-
+The endpoint map is already a `ConcurrentHashMap`, so registering a new limiter is safe while traffic flows:
 ```java
-// Correct — per-key lock on the Bucket object
-Bucket bucket = buckets.computeIfAbsent(clientId, k -> new Bucket(...));
-synchronized (bucket) { /* refill, check, consume */ }
-
-// Wrong #1 — global lock
-synchronized (this) { /* ALL clients block each other */ }
-
-// Wrong #2 — lock on the String key
-synchronized (clientId) { /* new String("alice") != "alice" — different monitors */ }
+rl.register("/search", new TokenBucketLimiter(200, 20, clock));   // atomically replaces the old one
 ```
+**Trade-off:** that endpoint's per-client state resets (everyone gets a full new bucket). If that's not acceptable, make `capacity` and `refillRatePerSecond` `volatile` fields with setters on the existing limiter, so the state is kept.
+</details>
 
-**Why `computeIfAbsent` before the synchronized block?**
-`ConcurrentHashMap.computeIfAbsent` is atomic — two threads racing on a brand-new key will only create one Bucket. Once the Bucket exists, `synchronized(bucket)` serializes the refill+consume for that specific client. Different clients have different Bucket instances → different monitors → run in parallel.
+<details>
+<summary><b>Q12. How would you know it's working in production?</b></summary>
 
----
+- **Metrics:** allow/deny count per endpoint (Q10), 429 rate, p99 latency of `allow()` itself, limiter errors.
+- **Alarms:** 429 rate suddenly jumps (a limit set too low, or an attack), or drops to 0 (the limiter is failing open).
+- **Logs:** sampled denials with clientId and endpoint, to see who's being throttled.
+</details>
 
-### Which algorithm to pick? (they WILL ask this)
+<details>
+<summary><b>Q13. How do you test the refill math and the locking?</b></summary>
 
-| Scenario | Pick |
-|----------|------|
-| General API throttling | **Token Bucket** — O(1) memory, handles bursts gracefully, simple math |
-| Strict "no more than N in T ms" accuracy | **Sliding Window Log** — exact, no boundary burst, costs O(maxRequests) memory |
-| Simple, lowest memory cost | **Fixed Window Counter** — O(1), but has boundary burst problem |
-| Smooth traffic (no bursts at all) | **Leaky Bucket** — constant output rate, excess queued or dropped |
-
-**One-liner:** *"Token Bucket for most cases — it allows legitimate burst traffic (e.g. a user making 5 rapid requests is fine) while protecting against sustained overload. Sliding Window Log when you need zero tolerance for boundary exploits."*
-
----
-
-## Design patterns in play (name these out loud in the interview)
-
-### In the BASE design — mention in Step 2 or Step 3
-
-| Pattern / Principle | Where it lives | One-line justification |
-|---------------------|----------------|------------------------|
-| **Strategy** ⭐ | `Limiter` interface + 2 impls (`TokenBucketLimiter`, `SlidingWindowLogLimiter`) | *"2 algorithms on day 1 with different math and different memory profiles — that's the one-sentence test."* |
-| **Factory** | `LimiterFactory` reads config, constructs the right Limiter | *"Config arrives as raw JSON with an algorithm discriminator; the factory maps it to the right constructor. Callers never `new TokenBucketLimiter(...)` directly."* |
-| **Facade** | `RateLimiter` | *"Application code only calls `allow(clientId, endpoint)` — 4 collaborators (factory, limiters map, default limiter, per-key state) hidden inside."* |
-| **Dependency Injection** | `Clock` injected into every Limiter | *"Refill math is time-dependent — DI makes it testable with a `MutableClock` instead of `Thread.sleep`."* |
-| **Value Object** | `RateLimitResult` (allowed, remaining, retryAfterMs) | *"Immutable structured return type. Beats juggling loose primitives."* |
-| **Per-key locking** (concurrency) | `ConcurrentHashMap.computeIfAbsent` + `synchronized(bucket)` | *"Different clients never block each other. Only same-client requests serialize."* |
-
-### Patterns for Step 5 extensibility
-
-| Follow-up trigger | Pattern | The one-line move |
-|-------------------|---------|-------------------|
-| "Add a new algorithm (Fixed Window Counter)" | **Strategy (extend)** ⭐ | *"New `FixedWindowLimiter implements Limiter`. One switch case in the factory. Zero changes to RateLimiter or existing algorithms."* |
-| "Config from YAML at startup" | **Factory (already there — just extend)** | *"That's what LimiterFactory does today; a new algorithm = 1 new class + 1 new switch case."* |
-| "Distributed (Redis-backed)" | **Strategy** | *"`RedisTokenBucketLimiter implements Limiter`. Lua script makes read-refill-write atomic on Redis — no distributed lock needed."* |
-| "Memory grows with millions of clients" | **Background sweeper** (concurrency, not GoF) | *"`ScheduledExecutorService` evicts buckets where `lastRefillTime < now - TTL`. Active clients never get evicted."* |
-| "Add metrics per endpoint" | **Decorator** | *"`MeteredLimiter(Limiter delegate)` wraps each registered limiter, counts allow/deny. Stackable — MetricsDecorator + LoggingDecorator + …"* |
-| "Per-user tier overrides (premium vs free)" | **Composition** (two-tier map lookup) | *"Second `overrides` map keyed by `clientId:endpoint`. Two-tier lookup: overrides → endpoint → default."* |
-| "Different cost per endpoint" | **Interface extension** | *"Extend `allow(clientId, int cost)`. `/search` costs 1 token, `/ml-inference` costs 10. Same bucket, different consumption."* |
-| "Fail-open vs fail-closed" | Design values choice | *"Catch exception in `RateLimiter.allow`; return `allow(0)` (fail-open) for API gateways so limiter bugs don't take down traffic."* |
-
-### Patterns to actively refuse
-
-- **Singleton on RateLimiter** — kills tests; DI a single instance.
-- **State pattern on Bucket** — a Bucket has no per-state behavior; it's just mutable data.
-- **Observer for metrics** — Decorator is cleaner; Observer would need every Limiter to know about listeners.
-- **Builder for the 2-arg `TokenBucketLimiter(capacity, refillRate)` ctor** — academic noise.
-
-### The rule to sound natural
-
-1. **Strategy + Factory are non-negotiable in the base** — 2 algorithms on day 1 AND config-driven construction mandate both.
-2. **Cap total patterns at 3** in the base (Strategy + Factory + Facade). Any more is over-engineering for a 45-min round.
-3. **Pair each pattern with a concrete win.** *"Factory — because raw JSON needs to be mapped to a class at runtime"* > *"I'd use Factory."*
+Time: a `Clock` you move by hand, so there's no `Thread.sleep` (the full `MutableClock` is in the driver).
+```java
+MutableClock clock = new MutableClock(0);
+TokenBucketLimiter tb = new TokenBucketLimiter(5, 1, clock);
+for (int i = 0; i < 5; i++) tb.allow("alice");          // empty the bucket
+assert !tb.allow("alice").isAllowed();                  // 6th denied
+clock.advanceMs(1000);
+assert tb.allow("alice").isAllowed();                   // exactly 1 token refilled
+```
+Concurrency: 50 threads released at the same instant, with the clock frozen, must give **exactly** `capacity` allows.
+```java
+CountDownLatch start = new CountDownLatch(1);
+AtomicInteger allowed = new AtomicInteger();
+ExecutorService pool = Executors.newFixedThreadPool(50);
+for (int i = 0; i < 50; i++) {
+    pool.submit(() -> {
+        start.await();                                  // everyone waits at the gate
+        if (limiter.allow("shared").isAllowed()) allowed.incrementAndGet();
+        return null;
+    });
+}
+start.countDown();                                      // release all 50 at once
+pool.shutdown();
+pool.awaitTermination(5, TimeUnit.SECONDS);
+// assert allowed.get() == 10   (capacity 10)
+```
+</details>
 
 ---
 
-## Common Mistakes That Lose Points
-
-- **`int` tokens** — 100ms at 1/s = 0.1 tokens. Int rounds to 0 → bucket never refills.
-- **No cap at capacity** — idle client banks tokens forever, burst limit destroyed.
-- **`floor` on retryAfterMs** — client retries too soon, gets denied again. Always `ceil`.
-- **Background refill thread** — wastes work on idle clients. Lazy refill is correct.
-- **Global lock on the Limiter** — all clients serialize. Per-key lock is the right granularity.
-- **Locking on the String key** — unreliable. Lock on the Bucket object.
-- **Adding `Client`, `Request`, `Endpoint` classes** — they're just strings, no managed state.
-- **Rejecting unknown endpoints** — should fall back to default, not throw.
+## 6. Traps that cost points
+1. `int` tokens: fractional refills vanish, so the bucket never refills.
+2. No cap at `capacity`: idle clients bank unlimited burst.
+3. `floor` instead of `ceil` on retry: the client retries too early and gets denied again.
+4. A background refill thread: wasted work, plus a thread you must manage.
+5. A `synchronized` method or `synchronized(clientId)`: either a global bottleneck or a broken lock.
+6. Adding a Factory before anyone mentioned config: time spent with no payoff.
+7. Drawing Redis and load balancers before `allow()` is coded.
 
 ---
 
-## 30-Second Summary
+## 7. Recall check (next day, no peeking)
+1. Why must `tokens` be a `double`? Give the exact numbers.
+2. Write the 5 steps of `TokenBucketLimiter.allow()` in order.
+3. What do you lock, why not the whole limiter, and why not the `clientId` string?
+4. Strategy vs Factory here: what does each do, and when does Factory become worth adding?
+5. Token Bucket vs Sliding Window Log vs Sliding Window Counter: memory, bursts, and when to pick each.
+6. In the distributed version, what moves to Redis, what replaces `synchronized`, and whose clock is used?
+7. Fail-open or fail-closed for a public API? For OTP sending?
 
-> *"Five classes: RateLimiter (facade), LimiterFactory (creates the right algorithm from raw config), Limiter (Strategy interface), TokenBucketLimiter, SlidingWindowLogLimiter. RateLimiter takes a list of JSON-like configs at startup; the factory reads the algorithm discriminator and builds the right limiter. allow() looks up the right limiter by endpoint and delegates. TokenBucket: lazy refill, tokens as double (partial refill is real), cap at capacity, ceil on retryAfterMs, retryAfterMs is null when allowed. SlidingWindowLog: ArrayDeque per client, evicts stale timestamps on each call — perfectly accurate but O(maxRequests) memory vs O(1). Thread safety: ConcurrentHashMap for per-client map, synchronized on the Bucket for check-and-consume — different clients never block each other. New algorithm = new Limiter class + one switch case. Everything else stays the same."*
+**Rebuild in 10 minutes:** `Limiter` interface · `RateLimitResult(allowed, remaining, retryAfterMs)` · `TokenBucketLimiter` with `Bucket{double tokens; long lastRefillTime}` · `computeIfAbsent` + `synchronized(bucket)` · `RateLimiter` with a `ConcurrentHashMap` of endpoints + a default.
 
 ---
 
-## Files in This Package
-
-| File | Purpose |
-|------|---------|
-| `model/RateLimitResult.java` | Value object — allowed, remaining, retryAfterMs (null when allowed) |
-| `algorithm/Limiter.java` | Strategy interface |
-| `algorithm/LimiterFactory.java` | Factory — reads algorithm discriminator, constructs the right Limiter |
-| `algorithm/TokenBucketLimiter.java` | Lazy refill, double tokens, per-key lock |
-| `algorithm/SlidingWindowLogLimiter.java` | ArrayDeque per client, lazy eviction |
-| `RateLimiter.java` | Facade — config-driven constructor + allow() |
-| `RateLimiterDriver.java` | 5 scenarios: config-driven, token bucket, sliding window, multi-endpoint, 50-thread burst |
-
+**Files:** `RateLimiter` (service) · `algorithm/` (`Limiter`, `TokenBucketLimiter`, `SlidingWindowLogLimiter`) · `model/RateLimitResult` · `RateLimiterDriver` (token bucket, sliding window, multi-endpoint, 50-thread test)
 ```bash
-mvn -q compile exec:java \
-  -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.RateLimiterDriver
+mvn -q compile exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.ratelimiter.RateLimiterDriver
 ```

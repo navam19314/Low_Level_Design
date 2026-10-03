@@ -33,8 +33,9 @@ public class SlidingWindowLogLimiter implements Limiter {
             long now = clock.millis();
             long cutoff = now - windowMs;
 
-            // drop timestamps that have fallen outside the window
-            while (!log.isEmpty() && log.peekFirst() < cutoff) {
+            // drop timestamps that have fallen outside the window (now - windowMs, now]
+            // <= not < : a request made exactly windowMs ago is out, so retryAfterMs below is exact
+            while (!log.isEmpty() && log.peekFirst() <= cutoff) {
                 log.pollFirst();
             }
 

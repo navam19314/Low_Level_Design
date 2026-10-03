@@ -76,7 +76,7 @@ All of the following were edited/improved this session and **compile + run clean
 
 | Problem | Status | Key work done |
 |---------|--------|---------------|
-| **ratelimiter** | ✅ done | Added `LimiterFactory`, config-driven `RateLimiter` ctor, `retryAfterMs` nullable; expanded Step-5 extensibility; added patterns section |
+| **ratelimiter** | ✅ done | 2026-10-03: base is Strategy-only (`LimiterFactory` + config ctor removed; Factory now lives only in MD follow-up Q5); `RateLimiter` map is `ConcurrentHashMap`; SlidingWindowLog evicts with `<=` (exact retry); MD rewritten in the new Amazon format |
 | **splitwise** | ✅ done | Simplified `PercentSplitStrategy` (loop not stream); added worked-example comments to `ExpenseManager`; **converted cents → rupees** across all files + MD; patterns + "what's expected" sections |
 | **vendingmachine** | ✅ done | Simplified code, class-per-state kept; **coins → Indian ₹ denominations (1/2/5/10/20)**; `getCents`→`getValue`; MD trimmed 657→~442 lines; added comments/examples |
 | **parkinglot** | ✅ done | MD aligned to actual code (was referencing a non-existent `Clock`); trimmed 737→~570; patterns + "what's expected" sections |
@@ -119,7 +119,7 @@ already be committed from prior sessions.
 ## 5. APIs and data structures (quick reference for the improved problems)
 
 - **ratelimiter**: `RateLimiter.allow(clientId, endpoint) → RateLimitResult`; `Limiter` strategy interface;
-  `TokenBucketLimiter`/`SlidingWindowLogLimiter`; `LimiterFactory`; `Clock`-injected; per-key lock via
+  `TokenBucketLimiter`/`SlidingWindowLogLimiter`; `Clock`-injected; per-key lock via
   `ConcurrentHashMap.computeIfAbsent` + `synchronized(bucket)`.
 - **splitwise**: `ExpenseManager` facade — `addExpense`, `getBalance`, `getNetBalance`, `simplifyDebts`;
   `SplitStrategy` (Equal/Exact/Percent); balance graph `Map<String,Map<String,Long>>` (never both
