@@ -189,33 +189,27 @@ Not ideal but recoverable. The Quick Cards give you the cheat codes; the referen
 
 ## File layout (for context)
 
+Problems are grouped into folders by the kind of problem they are (see [00_INDEX.md](00_INDEX.md) for the full table with run commands):
+
 ```
 hello_all_questions/
-├── 00_PREP_STRATEGY.md             ← THIS FILE
-├── parkinglot/                     ← Tier A
-├── splitwise/                      ← Tier A
-├── movieticket/                    ← Tier A
-├── lrucache/                       ← Tier A
-├── vendingmachine/                 ← Tier A
-├── cabbooking/                     ← Tier B
-├── ratelimiter/                    ← Tier B
-├── snakeladder/                    ← Tier B
-├── logger/                         ← Tier C (pick 1 of 2)
-├── jobscheduler/                   ← Tier C (pick 1 of 2)
-├── filesystem/                     ← Tier C (pick 1 of 2)
-├── chess/                          ← Tier C (pick 1 of 2)
-├── connectfour/                    ← Skip
-├── amazonlocker/                   ← Skip
-├── inventory/                      ← Skip
-├── notification/                   ← Skip
-├── meetingscheduler/               ← Skip
-├── paymentgateway/                 ← Skip
-├── urlshortener/                   ← Skip
-└── elevator/                       ← Skip
+├── 00_INDEX.md                       ← every problem, its folder, tier, and run command
+├── 00_AMAZON_LLD_FOUNDATIONS.md      ← how to think about any LLD problem
+├── 00_JAVA_AND_PATTERNS_REFRESHER.md ← Java syntax + design patterns
+├── 00_PREP_STRATEGY.md               ← THIS FILE
+├── allocation/        parkinglot, amazonlocker
+├── booking/           movieticket, meetingscheduler, inventory
+├── matching/          cabbooking, fooddelivery
+├── state_machines/    vendingmachine, elevator, insurance, downloadmanager
+├── pipelines/         notification, logger, jobscheduler
+├── policies/          ratelimiter, splitwise, paymentgateway, urlshortener
+├── composition/       coffeemachine, filesystem, kanban
+├── data_structures/   lrucache
+└── games/             tictactoe, snakeladder, connectfour, chess
 ```
 
 Each problem folder contains:
 - The Java source files (compiles + has a working driver)
-- `INTERVIEW_WALKTHROUGH.md` — the full 45-min interview walkthrough
+- `INTERVIEW_WALKTHROUGH.md` — plain-language picture, design decisions, the code to write in order, follow-ups with code
 
 The consolidated `LLD_Revision_Sheet.docx` (in `~/Downloads/`) bundles all walkthroughs + Quick Cards + 5 reference pages with a static page-numbered index.

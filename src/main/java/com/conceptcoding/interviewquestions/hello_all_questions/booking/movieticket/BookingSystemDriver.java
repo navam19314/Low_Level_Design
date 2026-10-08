@@ -1,0 +1,127 @@
+package com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket;
+
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Booking;
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.City;
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Movie;
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Screen;
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Showtime;
+import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Theater;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class BookingSystemDriver {
+
+    public static void main(String[] args) throws Exception {
+        // ---- Build catalog: City → Theater → Screen → Showtime ----
+        Movie inception = new Movie("M1", "Inception");
+        Movie dune      = new Movie("M2", "Dune");
+
+        Screen screen3 = new Screen("SC3", "Screen 3");
+        Screen screen5 = new Screen("SC5", "Screen 5");
+
+        screen3.addShowtime(new Showtime("S1", screen3, inception, LocalDateTime.of(2026, 7, 1, 19, 0)));
+        screen3.addShowtime(new Showtime("S2", screen3, inception, LocalDateTime.of(2026, 7, 1, 22, 0)));
+        screen5.addShowtime(new Showtime("S3", screen5, dune,      LocalDateTime.of(2026, 7, 1, 20, 0)));
+
+        Theater amc = new Theater("T1", "AMC");
+        amc.addScreen(screen3);
+        amc.addScreen(screen5);
+
+        City bengaluru = new City("BLR", "Bengaluru");
+        bengaluru.addTheater(amc);
+
+        BookingSystem system = new BookingSystem(List.of(bengaluru));
+
+        System.out.println("--- Search 'inception' in Bengaluru ---");
+        for (Showtime s : system.searchMovies("BLR", "inception")) {
+            System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime()
+                    + " in " + s.getScreen().getName());
+        }
+
+        System.out.println("\n--- Browse AMC ---");
+        for (Showtime s : system.getShowtimesAtTheater(amc)) {
+            System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime());
+        }
+
+        System.out.println("\n--- Available seats on S1 before booking ---");
+        List<String> before = system.getAvailableSeats("S1");
+        System.out.println("  " + before.size() + " seats free  (expect 100)");
+
+        System.out.println("\n--- Happy-path booking ---");
+        Booking b1 = system.book("S1", List.of("5", "6"));
+        System.out.println("Booking id: " + b1.getBookingId());
+
+        System.out.println("\n--- Available seats on S1 after booking seats 5,6 ---");
+        List<String> after = system.getAvailableSeats("S1");
+        System.out.println("  " + after.size() + " seats free  (expect 98)");
+        System.out.println("  seat 5 still listed? " + after.contains("5") + "  (expect false)");
+
+        System.out.println("\n--- Same seats again → IllegalStateException ---");
+        try { system.book("S1", List.of("5")); }
+        catch (IllegalStateException e) { System.out.println("Rejected: " + e.getMessage()); }
+
+        System.out.println("\n--- Partial booking is atomic: seat 6 taken → whole booking fails ---");
+        try { system.book("S1", List.of("7", "6", "8")); }
+        catch (IllegalStateException e) {
+            System.out.println("Rejected: " + e.getMessage());
+            System.out.println("Seat 7 still available? " + system.book("S1", List.of("7")).getBookingId().substring(0, 8) + "...");
+        }
+
+        System.out.println("\n--- Invalid seat id ---");
+        try { system.book("S1", List.of("not-a-seat")); }
+        catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
+
+        System.out.println("\n--- Same seat twice in one request ---");
+        try { system.book("S1", List.of("20", "20")); }
+        catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
+
+        System.out.println("\n--- Unknown showtime ---");
+        try { system.book("nope", List.of("1")); }
+        catch (NoSuchElementException e) { System.out.println("Rejected: " + e.getMessage()); }
+
+        System.out.println("\n--- Concurrent booking on S2: 50 threads race for seat '10' ---");
+        concurrentRace(system, "S2", "10", /* threadCount */ 50);
+    }
+
+    private static void concurrentRace(BookingSystem system, String showtimeId,
+                                       String seat, int threadCount) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch fire  = new CountDownLatch(1);
+        AtomicInteger successes = new AtomicInteger();
+        AtomicInteger conflicts = new AtomicInteger();
+        List<Throwable> unexpected = new ArrayList<>();
+
+        for (int i = 0; i < threadCount; i++) {
+            pool.submit(() -> {
+                ready.countDown();
+                try {
+                    fire.await();
+                    system.book(showtimeId, List.of(seat));
+                    successes.incrementAndGet();
+                } catch (IllegalStateException e) {
+                    conflicts.incrementAndGet();
+                } catch (Throwable t) {
+                    synchronized (unexpected) { unexpected.add(t); }
+                }
+            });
+        }
+
+        ready.await();                  // all threads at the barrier
+        fire.countDown();               // GO!
+        pool.shutdown();
+        pool.awaitTermination(5, TimeUnit.SECONDS);
+
+        System.out.println("  successes = " + successes.get() + "  (expect 1)");
+        System.out.println("  conflicts = " + conflicts.get() + "  (expect " + (threadCount - 1) + ")");
+        System.out.println("  unexpected = " + unexpected.size() + "  (expect 0)");
+    }
+}

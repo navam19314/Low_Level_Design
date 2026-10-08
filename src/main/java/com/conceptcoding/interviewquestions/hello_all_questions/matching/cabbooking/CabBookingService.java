@@ -1,0 +1,140 @@
+package com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking;
+
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.matching.DriverMatchingStrategy;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.model.Driver;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.model.DriverStatus;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.model.Location;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.model.Ride;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.model.Rider;
+import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbooking.pricing.PricingStrategy;
+
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+// Facade. Holds registries + injected strategies; orchestrates the ride lifecycle:
+//
+//   1. requestRide  — finds an AVAILABLE driver via the matching strategy,
+//      atomically reserves them (AVAILABLE → ON_TRIP), creates a Ride in MATCHED.
+//   2. startRide    — driver picked rider up; Ride MATCHED → IN_PROGRESS.
+//   3. completeRide — drop-off; calculates fare, releases driver,
+//      Ride IN_PROGRESS → COMPLETED.
+//   4. cancelRide   — rider cancelled before/after match; if matched,
+//      driver is released; Ride → CANCELLED.
+//
+// Concurrency model:
+//   - Registries are ConcurrentHashMap so multiple requests can be served
+//     in parallel without coarse locking.
+//   - Driver status mutation is gated by Driver.tryReserve() which is
+//     internally synchronized(this) — the AVAILABLE → ON_TRIP transition
+//     is atomic per driver.
+//   - The matching strategy returns a RANKED LIST; we iterate and try to
+//     reserve each until one wins. This is the classic "optimistic match"
+//     loop — no global lock, just per-driver CAS-style ordering.
+//   - Ride state transitions are gated by Ride#transitionTo under
+//     synchronized(ride) — concurrent complete/cancel on the same ride
+//     can't corrupt state.
+//
+// Surge: currentSurgeBasisPoints is a simple field updated by some external
+// demand-monitor (out of scope here). The pricing strategy receives it per call.
+public class CabBookingService {
+
+    private final ConcurrentMap<String, Driver> drivers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Rider>  riders  = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Ride>   rides   = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> activeRideByRider = new ConcurrentHashMap<>();   // riderId → rideId
+    private final AtomicLong                    rideSeq = new AtomicLong();
+
+    private final DriverMatchingStrategy matchingStrategy;
+    private final PricingStrategy        pricingStrategy;
+    private final Clock                  clock;
+
+    private volatile int currentSurgeBasisPoints = 10_000;   // 1.0× default
+
+    public CabBookingService(DriverMatchingStrategy matchingStrategy,
+                             PricingStrategy        pricingStrategy,
+                             Clock                  clock) {
+        this.matchingStrategy = matchingStrategy;
+        this.pricingStrategy  = pricingStrategy;
+        this.clock            = clock;
+    }
+
+    // ---- registries ----
+
+    public void registerDriver(Driver d) { drivers.put(d.getId(), d); }
+    public void registerRider(Rider r)   { riders.put(r.getId(), r); }
+
+    public Optional<Driver> getDriver(String id) { return Optional.ofNullable(drivers.get(id)); }
+    public Optional<Ride>   getRide(String id)   { return Optional.ofNullable(rides.get(id)); }
+
+    public void setSurgeBasisPoints(int bps) {
+        if (bps < 10_000) throw new IllegalArgumentException("Surge cannot reduce price below 1.0×");
+        this.currentSurgeBasisPoints = bps;
+    }
+
+    // ---- ride lifecycle ----
+
+    // Try to book a ride. On success returns the Ride in MATCHED state with
+    // a Driver assigned. Throws if no driver could be reserved.
+    public Ride requestRide(Rider rider, Location pickup, Location dropoff) {
+        String id = "ride-" + rideSeq.incrementAndGet();
+        // one active ride per rider: a double-tap on "Book" must not book two cabs
+        if (activeRideByRider.putIfAbsent(rider.getId(), id) != null) {
+            throw new IllegalStateException(rider.getId() + " already has an active ride");
+        }
+
+        List<Driver> pool = new ArrayList<>();
+        for (Driver d : drivers.values()) {
+            if (d.getStatus() == DriverStatus.AVAILABLE) pool.add(d);
+        }
+
+        List<Driver> ranked = matchingStrategy.rankCandidates(pickup, pool);
+
+        for (Driver candidate : ranked) {
+            if (candidate.tryReserve()) {
+                Ride ride = new Ride(id, rider, pickup, dropoff, clock);
+                ride.match(candidate);
+                rides.put(id, ride);
+                return ride;
+            }
+        }
+        activeRideByRider.remove(rider.getId(), id);          // undo: no ride was created
+        throw new IllegalStateException("No drivers available near pickup");
+    }
+
+    public void startRide(String rideId) {
+        Ride r = required(rideId);
+        r.start();
+    }
+
+    // Drop-off — calculate fare (rupees), release driver, mark COMPLETED.
+    public long completeRide(String rideId) {
+        Ride r = required(rideId);
+        long fare = pricingStrategy.calculateFare(
+                r.getSource(), r.getDestination(), currentSurgeBasisPoints);
+        r.complete(fare);
+        r.getDriver().releaseFromTrip(r.getDestination());
+        activeRideByRider.remove(r.getRider().getId(), rideId);
+        return fare;
+    }
+
+    // Rider cancels. Allowed from REQUESTED or MATCHED. If MATCHED, the
+    // driver is released (returns to AVAILABLE at their current location).
+    public void cancelRide(String rideId) {
+        Ride r = required(rideId);
+        Driver d = r.getDriver();   // may be null if cancellation hits before match
+        r.cancel();
+        if (d != null) d.releaseFromTrip(d.getCurrentLocation());
+        activeRideByRider.remove(r.getRider().getId(), rideId);
+    }
+
+    private Ride required(String rideId) {
+        Ride r = rides.get(rideId);
+        if (r == null) throw new IllegalArgumentException("Unknown ride " + rideId);
+        return r;
+    }
+}

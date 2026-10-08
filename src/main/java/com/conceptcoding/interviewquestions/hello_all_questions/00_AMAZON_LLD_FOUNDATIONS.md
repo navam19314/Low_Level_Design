@@ -36,47 +36,49 @@ Ask these 6 questions, in this order. They work for a problem you have never see
 Learn the **skeleton** of each family. When you get a new question, first work out which family (or two) it belongs to, then start from that skeleton.
 
 ### F1. Allocation: "find a free slot that fits"
-- **Problems:** Parking Lot, Amazon Locker
+- **Problems:** Parking Lot, Amazon Locker · folder `allocation/`
 - **Skeleton:** `Slot(id, size)` · `allocate(item) → Ticket` · `release(ticketId)` · free/occupied tracked in one place
 - **Crux:** choosing the slot (smallest that fits) and claiming it atomically
 - **Signal:** sizes, capacity, "assign", "nearest free"
 
 ### F2. Booking under contention: "two people want the same thing"
-- **Problems:** Movie Ticket, Meeting Room, Restaurant table, Inventory last unit
+- **Problems:** Movie Ticket, Meeting Room, Restaurant table, Inventory last unit · folder `booking/`
 - **Skeleton:** `Resource` · `Booking` · check-availability + book in **one atomic step**, using a lock on that resource only
 - **Crux:** no double-booking. Optionally a temporary hold that expires. Time ranges use half-open intervals `[start, end)`.
 - **Signal:** seats, slots, time ranges, "at the same time"
 
 ### F3. State machine: "what you can do depends on where you are"
-- **Problems:** Vending Machine, Elevator, Download Manager, Ride/Trip lifecycle
+- **Problems:** Vending Machine, Elevator, Download Manager, Insurance Application, Ride/Trip lifecycle · folder `state_machines/`
 - **Skeleton:** `enum State` + allowed transitions, **or** one class per state when the behaviour differs a lot per state
 - **Crux:** reject illegal actions (can't dispense before paying, can't resume a finished download)
 - **Signal:** lifecycle words: idle, paused, in-progress, completed, cancelled
 
 ### F4. Fan-out pipeline: "one event, many outputs"
-- **Problems:** Logger, Notification Service
+- **Problems:** Logger, Notification Service, Job Scheduler (queue + workers) · folder `pipelines/`
 - **Skeleton:** `send(event)` loops over N handlers (`Sink` / `Sender`), each wrapped in its own try/catch
 - **Crux:** one broken output must not stop the others. Optional: async with a queue, retries.
 - **Signal:** channels, destinations, "email + SMS + push", levels
 
 ### F5. Swappable policy: "same question, different algorithms"
-- **Problems:** Rate Limiter, Rider Matching, Splitwise split types, Elevator dispatch, Job Scheduler
+- **Problems:** Rate Limiter, Splitwise split types, Payment Gateway, URL Shortener ids, Elevator dispatch · folder `policies/`
 - **Skeleton:** an interface for the algorithm, 2+ implementations, a service that holds one
 - **Crux:** the algorithm itself (refill math, nearest driver) plus a clean interface boundary
 - **Signal:** "by distance or by rating", "equal or exact", "token bucket or sliding window"
 
 ### F6. Board / turn game
-- **Problems:** Tic-Tac-Toe, Snake & Ladder, Connect Four, Chess
+- **Problems:** Tic-Tac-Toe, Snake & Ladder, Connect Four, Chess · folder `games/`
 - **Skeleton:** `Board` · `Player` · `Game` (turn loop, validate move, check winner)
 - **Crux:** O(1) win check (row/column counters), clean turn rotation
 - **Signal:** board, players, turns, win condition
 
 ### F7. Add-on composition: "stack extras on a base"
-- **Problems:** Coffee Machine, Pizza Ordering
+- **Problems:** Coffee Machine, Pizza Ordering; plus File System (Composite) and Kanban (ordered containers) · folder `composition/`
 - **Skeleton:** `Beverage` interface · base drinks · decorators that wrap another `Beverage`
 - **Crux:** avoid class explosion (`LatteWithMilkAndSugar...`). Price and description build up through the wrappers.
 - **Signal:** toppings, add-ons, "extra shot", "requirements added mid-interview"
 
+> **Matching = F5 + F2 + F3** gets its own folder `matching/`: Cab Booking and Food Delivery (rank candidates with a Strategy, claim one atomically, then run a trip/order state machine). LRU Cache lives in `data_structures/`. The full map is in [00_INDEX.md](00_INDEX.md).
+>
 > **Real problems often combine two families.**
 > Cab Booking = F5 (matching strategy) + F2 (two orders want one driver) + F3 (trip states).
 > Download Manager = F3 (download states) + a producer-consumer queue (§4).

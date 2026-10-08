@@ -1,5 +1,27 @@
 # Session Handoff — LLD Interview Prep Deck
 
+> **UPDATE 2026-10-07 (read this first; it supersedes §2's MD structure, §3's file list and every path below):**
+> - **Folders are grouped by problem kind**: `allocation/ booking/ matching/ state_machines/ pipelines/ policies/
+>   composition/ data_structures/ games/`. Packages are `hello_all_questions.<folder>.<problem>`. `logger_practice/`
+>   (the owner's own practice) is untouched. **`00_INDEX.md`** lists every problem, its folder, tags and run command.
+> - **All 26 problems** use the learning-first MD format: crux + family header → 1 Plain-language picture →
+>   2 From story to design (choice / rejected / why) → 3 Patterns that earn their place (+ tempting-but-wrong) →
+>   4 The timed run (clarify dialogue, timeline, COMPLETE classes in writing order, dry run) →
+>   5 Follow-ups in `<details>` with code verified in a scratch compile → 6 Traps → 7 Recall check.
+> - Shared docs: `00_INDEX.md`, `00_AMAZON_LLD_FOUNDATIONS.md` (families now name their folders),
+>   `00_JAVA_AND_PATTERNS_REFRESHER.md`, `00_PREP_STRATEGY.md` (layout updated).
+> - New problems this round: fooddelivery, insurance, kanban, coffeemachine, downloadmanager.
+> - Real bugs fixed (each has a driver regression check): parking lot double-allocation; splitwise negative EXACT /
+>   empty participants; snake-ladder chained jumps (standard board had 6→25 onto a snake head); elevator dispatch
+>   piling onto one cab; tic-tac-toe → O(1) counters; amazon locker exact-size-only + non-atomic claim + Random codes;
+>   cab booking double-tap; chess hasMoved set by check-scan try-moves (a7-a5 rejected); inventory transfer firing
+>   alerts while holding both locks; payment gateway bank call inside computeIfAbsent + key reuse; URL shortener
+>   random-code overwrite race; file system "/a/" nameless entries + relative-path crash; showtime duplicate seats;
+>   sliding-window `<` vs `<=`.
+> - Conventions enforced everywhere: `//` comments (no Javadoc), normal classes (no records), `catch (Exception)`,
+>   money as `long` (rupees, or paise in payments), injected `Clock` where time matters.
+> - All 26 drivers pass on `mvn -q clean compile`. Nothing committed (owner commits manually).
+
 _Last updated: 2026-08-02. Scope: the `hello_all_questions` package — a set of Low-Level-Design
 (LLD) interview practice problems, each with runnable Java + a companion `INTERVIEW_WALKTHROUGH.md`._
 
@@ -80,7 +102,7 @@ All of the following were edited/improved this session and **compile + run clean
 | **splitwise** | ✅ done | Simplified `PercentSplitStrategy` (loop not stream); added worked-example comments to `ExpenseManager`; **converted cents → rupees** across all files + MD; patterns + "what's expected" sections |
 | **vendingmachine** | ✅ done | Simplified code, class-per-state kept; **coins → Indian ₹ denominations (1/2/5/10/20)**; `getCents`→`getValue`; MD trimmed 657→~442 lines; added comments/examples |
 | **parkinglot** | ✅ done | MD aligned to actual code (was referencing a non-existent `Clock`); trimmed 737→~570; patterns + "what's expected" sections |
-| **movieticket** | ✅ done | Big evolution: `Reservation`→`Booking` rename; added `City`+`Screen` (full BookMyShow hierarchy `City→Theater→Screen→Showtime`); flat numbered seats `"1".."100"`; removed custom `SeatUnavailableException` (uses `IllegalStateException`); removed `Clock` (uses `LocalDateTime`); **fixed real concurrency bug** (`isAvailable`/`getAvailableSeats` now `synchronized` like `book`); flattened LoD search to a direct loop; wired up `getAvailableSeats(showtimeId)`; cancellation deferred to Step-5 |
+| **movieticket** | ✅ done | Big evolution: `Reservation`→`Booking` rename; added `City`+`Screen` (full BookMyShow hierarchy `City→Theater→Screen→Showtime`); flat numbered seats `"1".."100"`; removed custom `SeatUnavailableException` (uses `IllegalStateException`); removed `Clock` (uses `LocalDateTime`); **fixed real concurrency bug** (`isAvailable`/`getAvailableSeats` now `synchronized` like `book`); flattened LoD search to a direct loop; wired up `getAvailableSeats(showtimeId)`; cancellation deferred to Step-5; **2026-10-03:** `Showtime.book` rejects duplicate seat ids in one request; MD rewritten in the new Amazon format (holds/payment/cancel/per-seat/DB/meeting-room follow-ups with tested code) |
 | **notification** | ✅ done | Records→classes; dropped `Clock`→`Instant.now()`; `catch(Throwable)`→`catch(Exception)`; MD standardized (725→~593) + added `Part 0` layman section |
 | **lrucache** | ✅ done | Javadoc→`//`; MD standardized (canonical-8/SOLID/soundbites removed, clarifying dialogue + "what's expected" added) |
 | **logger** | ✅ done | Javadoc→`//`; `catch(Throwable)`→`catch(Exception)`; removed redundant `Collections.synchronizedList(new CopyOnWriteArrayList<>())`; MD standardized + added `Part 0` layman section |
@@ -208,11 +230,11 @@ mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all
 Examples:
 ```bash
 # filesystem
-mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.filesystem.FileSystemDriver
+mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.composition.filesystem.FileSystemDriver
 # movieticket (prints a 50-thread race: successes=1, conflicts=49)
-mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.movieticket.BookingSystemDriver
+mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.BookingSystemDriver
 # logger (prints a 50-thread atomicity check: 1000/1000 well-formed)
-mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.logger.LoggerDriver
+mvn -q exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.pipelines.logger.LoggerDriver
 # splitwise, notification, lrucache, ratelimiter, vendingmachine, parkinglot follow the same pattern
 ```
 
