@@ -86,7 +86,7 @@ ParkingLot
 
 ParkingSpot   id, floor, spotType                    (getters only)
 Ticket        id, spotId, vehicleType, entryTime     (getters only)
-VehicleType   MOTORCYCLE(1), CAR(2), TRUCK(3)
+VehicleType   BIKE(1), CAR(2), TRUCK(3)
 SpotType      SMALL(1), MEDIUM(2), LARGE(3)  +  canFit(vehicleType)
 
 SpotAllocationStrategy   choose(freeSpots, vehicleType)   ← SmallestFitStrategy
@@ -123,10 +123,24 @@ else if (mode == NEAR_LIFT)    { /* loop C */ }     // keeps growing
 **Say:** *"Strategy picks one rule. Decorator lets rules stack on top of each other."*
 
 #### Observer for display boards (Extension 3)
+**In one line:** one object announces "something happened", and everyone who signed up gets told. Like a YouTube channel and its subscribers: a new subscriber doesn't change the channel.
+```
+interface Listener:  onEvent(data)
+
+class Subject:
+    listeners = []
+    addListener(l):  listeners.add(l)
+    doSomething():
+        ...change state...
+        for l in listeners: l.onEvent(data)     // tell everyone
+```
+Three parts: a **listener interface**, a **list** in the subject, and a **loop** that notifies after the change.
+
 **Problem:** when a spot changes, several things care: the floor board, the entrance board, the mobile app.
 **Without it:** `ParkingLot` calls `board.update()`, `app.push()`... directly, so it knows about every screen, and a new screen means editing `ParkingLot`.
-**With it:** `ParkingLot` only says "spot changed" to a list of `SpotListener`s, and each listener decides what to do.
-**Say:** *"The lot announces the event and doesn't care who's listening. A new screen is a new listener."*
+**With it:** `ParkingLot` is the subject, `SpotListener` is the interface, and `FloorDisplayBoard` is one listener. `enter`/`exit` call `notifyListeners(spot, nowFree)`. A new screen is `lot.addListener(new MobileAppNotifier())`, and `ParkingLot` doesn't change. Full code in Extension 3.
+**Pull vs push:** without Observer, a board keeps **asking** the lot "how many are free?" (pull). With it, the lot **tells** the board only when something changes (push).
+**Say:** *"The lot announces the event and doesn't care who's listening. A new screen is a new listener. Listeners run inside the lock, so they must be quick, and anything slow, like an SMS, goes after the lock is released."*
 
 #### Patterns I deliberately **don't** use (say this when asked; it shows judgement)
 | Pattern | Why not here |
@@ -154,7 +168,7 @@ else if (mode == NEAR_LIFT)    { /* loop C */ }     // keeps growing
 
 ```java
 public enum VehicleType {
-    MOTORCYCLE(1), CAR(2), TRUCK(3);
+    BIKE(1), CAR(2), TRUCK(3);
     private final int size;
     VehicleType(int size) { this.size = size; }
     public int getSize() { return size; }
@@ -165,12 +179,13 @@ public enum SpotType {
     private final int size;
     SpotType(int size) { this.size = size; }
     public int getSize() { return size; }
-    public boolean canFit(VehicleType v) { return size >= v.getSize(); }
+    public boolean canFit(VehicleType v) { return size >= v.getSize(); }   // at least as big
 }
 
 public class ParkingSpot { private final String id; private final int floor; private final SpotType type; /* ctor + getters */ }
 public class Ticket { private final String id, spotId; private final VehicleType vehicleType; private final Instant entryTime; /* ctor + getters */ }
 ```
+**Say while writing the enums:** *"Each vehicle and spot has a size. A spot fits if its size is at least the vehicle's, and that rule lives only in `canFit`."*
 
 ```java
 public interface SpotAllocationStrategy {
@@ -361,7 +376,7 @@ private void notifyListeners(ParkingSpot spot, boolean nowFree) {
 ### 4. "Add EV charging spots"
 **Idea:** the size rule stays. The charger spot is the only exception, and it's reserved for EVs.
 ```java
-public enum VehicleType { MOTORCYCLE(1), CAR(2), ELECTRIC_CAR(2), TRUCK(3); /* same as before */ }
+public enum VehicleType { BIKE(1), CAR(2), ELECTRIC_CAR(2), TRUCK(3); /* same as before */ }
 
 public enum SpotType {
     SMALL(1), MEDIUM(2), EV_CHARGING(2), LARGE(3);

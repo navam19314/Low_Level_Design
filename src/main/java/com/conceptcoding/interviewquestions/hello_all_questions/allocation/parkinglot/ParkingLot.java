@@ -63,12 +63,12 @@ public class ParkingLot {
         return fee;
     }
 
-    // for the "spots free" display board
-    public synchronized int freeSpotsFor(VehicleType vehicle) {
-        int free = 0;
-        for (ParkingSpot s : freeSpots()) if (s.getType().canFit(vehicle)) free++;
-        return free;
-    }
+//    // for the "spots free" display board
+//    public synchronized int freeSpotsFor(VehicleType vehicle) {
+//        int free = 0;
+//        for (ParkingSpot s : freeSpots()) if (s.getType().canFit(vehicle)) free++;
+//        return free;
+//    }
 
     private List<ParkingSpot> freeSpots() {
         List<ParkingSpot> free = new ArrayList<>();

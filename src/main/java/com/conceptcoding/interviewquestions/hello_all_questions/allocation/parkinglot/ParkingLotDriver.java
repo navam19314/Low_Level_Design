@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
 public class ParkingLotDriver {
 
     static final PricingStrategy PRICING = new HourlyPricing(Map.of(
-            VehicleType.MOTORCYCLE, 20L, VehicleType.CAR, 50L, VehicleType.TRUCK, 100L));   // ₹ per hour
+            VehicleType.BIKE, 20L, VehicleType.CAR, 50L, VehicleType.TRUCK, 100L));   // ₹ per hour
 
     public static void main(String[] args) throws Exception {
         MutableClock clock = new MutableClock();
@@ -38,8 +38,8 @@ public class ParkingLotDriver {
         ParkingLot lot = new ParkingLot(spots, new SmallestFitStrategy(), PRICING, clock);
 
         System.out.println("=== Smallest fit: bikes use bike spots first ===");
-        Ticket bike1 = lot.enter(VehicleType.MOTORCYCLE);
-        Ticket bike2 = lot.enter(VehicleType.MOTORCYCLE);
+        Ticket bike1 = lot.enter(VehicleType.BIKE);
+        Ticket bike2 = lot.enter(VehicleType.BIKE);
         System.out.println("  bike 1 → " + bike1.getSpotId() + " (expect G-S1), bike 2 → " + bike2.getSpotId()
                 + " (expect G-M1: bike spots full, takes a car spot)");
 
