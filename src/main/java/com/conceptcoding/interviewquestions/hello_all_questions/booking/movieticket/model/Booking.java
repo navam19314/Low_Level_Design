@@ -3,19 +3,20 @@ package com.conceptcoding.interviewquestions.hello_all_questions.booking.movieti
 import java.util.ArrayList;
 import java.util.List;
 
-// Confirmed booking record — immutable. Held by the Showtime that owns these seats.
-// (When cancellation is added in Step 5, this grows a back-ref to its Showtime so
-//  cancel-by-bookingId routes without scanning.)
+// A confirmed booking. Immutable.
 public class Booking {
 
-    private final String bookingId;
-    private final List<String> seatIds;
+    private final String id;
+    private final String showtimeId;
+    private final List<Integer> seats;
 
-    public Booking(String bookingId, List<String> seatIds) {
-        this.bookingId = bookingId;
-        this.seatIds   = new ArrayList<>(seatIds);   // defensive copy in
+    public Booking(String id, String showtimeId, List<Integer> seats) {
+        this.id = id;
+        this.showtimeId = showtimeId;
+        this.seats = new ArrayList<>(seats);
     }
 
-    public String       getBookingId() { return bookingId; }
-    public List<String> getSeatIds()   { return new ArrayList<>(seatIds); }  // defensive copy out
+    public String        getId()         { return id; }
+    public String        getShowtimeId() { return showtimeId; }
+    public List<Integer> getSeats()      { return new ArrayList<>(seats); }
 }

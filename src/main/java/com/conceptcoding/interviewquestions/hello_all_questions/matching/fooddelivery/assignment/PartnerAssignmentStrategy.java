@@ -5,9 +5,8 @@ import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddel
 
 import java.util.List;
 
-// Strategy: HOW we pick a rider (nearest, best rated, fewest deliveries today...).
-// Returns candidates best-first. The service then tries to claim them in that order,
-// because the best rider may get grabbed by another order a moment earlier.
+// Strategy: which free rider gets this order? Nearest today; best-rated or fewest-deliveries tomorrow.
 public interface PartnerAssignmentStrategy {
-    List<DeliveryPartner> rank(List<DeliveryPartner> partners, Location pickup);
+    // returns the chosen rider, or null if none is free
+    DeliveryPartner choose(List<DeliveryPartner> freePartners, Location pickup);
 }

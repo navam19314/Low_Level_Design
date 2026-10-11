@@ -11,21 +11,21 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 ## allocation/: "find a free slot that fits, claim it atomically"
 | Problem | The crux | Asked |
 |---|---|---|
-| [Parking Lot](allocation/parkinglot/INTERVIEW_WALKTHROUGH.md) | smallest-fit spot, concurrent claim, pricing strategy | **E**, Amazon classic |
+| [Parking Lot](allocation/parkinglot/INTERVIEW_WALKTHROUGH.md) | smallest-fit spot, allocation + pricing strategies | **E**, Amazon classic |
 | [Amazon Locker](allocation/amazonlocker/INTERVIEW_WALKTHROUGH.md) | the same allocation + a one-time, expiring, unguessable pickup code | ★ ☆ |
 
 ## booking/: "two people want the same thing at the same time"
 | Problem | The crux | Asked |
 |---|---|---|
-| [Movie Ticket (BookMyShow)](booking/movieticket/INTERVIEW_WALKTHROUGH.md) | atomic check-and-book per show, seat holds while paying | ★ **E** |
+| [Movie Ticket (BookMyShow)](booking/movieticket/INTERVIEW_WALKTHROUGH.md) | atomic check-and-book per show (holds, payment, per-seat locks in extensions) | ★ **E** |
 | [Meeting Room Scheduler](booking/meetingscheduler/INTERVIEW_WALKTHROUGH.md) | half-open time ranges, O(log n) conflict check with TreeMap | ★ |
-| [Inventory (multi-warehouse)](booking/inventory/INTERVIEW_WALKTHROUGH.md) | no negative stock, deadlock-free transfers, flash-sale reservations | ★ (HLD flash sale) |
+| [Inventory (multi-warehouse)](booking/inventory/INTERVIEW_WALKTHROUGH.md) | no negative stock, deadlock-free transfers (alerts, flash-sale reservations in extensions) | ★ (HLD flash sale) |
 
-## matching/: "rank candidates, claim one atomically, then run a lifecycle"
+## matching/: "pick the best free candidate, then run a lifecycle"
 | Problem | The crux | Asked |
 |---|---|---|
-| [Cab Booking / Rider Matching](matching/cabbooking/INTERVIEW_WALKTHROUGH.md) | matching strategy, `tryReserve` claim, trip state machine | ★ |
-| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | order state machine, rider CAS claim, price snapshot | **E** (reported at Ethos) |
+| [Cab Booking / Rider Matching](matching/cabbooking/INTERVIEW_WALKTHROUGH.md) | nearest-driver strategy, trip state machine (pricing + surge in extensions) | ★ |
+| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | order state machine, one-restaurant cart, price snapshot, waiting orders | **E** (reported at Ethos) |
 
 ## state_machines/: "what you can do depends on the current state"
 | Problem | The crux | Asked |

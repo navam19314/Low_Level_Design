@@ -3,35 +3,33 @@ package com.conceptcoding.interviewquestions.hello_all_questions.allocation.park
 import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.allocation.SpotAllocationStrategy;
 import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.model.ParkingSpot;
 import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.model.Ticket;
-import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.model.Vehicle;
+import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.model.VehicleType;
 import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parkinglot.pricing.PricingStrategy;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 // The service the entry and exit gates call.
 //
-// Concurrency without a global lock:
-//   occupiedSpotIds.add(id)        is atomic: of two cars racing for spot C1, exactly one gets true
-//   platesInside.putIfAbsent(...)  is atomic: the same car can't enter twice
-//   activeTickets.remove(id)       is atomic: a ticket can only be exited once
+// Thread safety: enter() and exit() are synchronized, one lock for the whole lot.
+// Simple and correct: two gates can never get the same spot. If the interviewer asks for more
+// throughput, the follow-up replaces this with an atomic claim (see the walkthrough, Extensibility #6).
 public class ParkingLot {
 
     private final List<ParkingSpot> spots;
-    private final Set<String> occupiedSpotIds = ConcurrentHashMap.newKeySet();
-    private final Map<String, Ticket> activeTickets = new ConcurrentHashMap<>();   // ticketId → ticket
-    private final Map<String, String> platesInside = new ConcurrentHashMap<>();    // plate → ticketId
+    private final Set<String> occupiedSpotIds = new HashSet<>();        // the ONE place "taken" lives
+    private final Map<String, Ticket> activeTickets = new HashMap<>();  // ticketId → ticket
     private final SpotAllocationStrategy allocationStrategy;
     private final PricingStrategy pricingStrategy;
     private final Clock clock;
-    private final AtomicLong ticketSeq = new AtomicLong();
+    private int nextTicketNumber = 1;
 
     public ParkingLot(List<ParkingSpot> spots, SpotAllocationStrategy allocationStrategy,
                       PricingStrategy pricingStrategy, Clock clock) {
@@ -41,47 +39,40 @@ public class ParkingLot {
         this.clock = clock;
     }
 
-    public Ticket enter(Vehicle vehicle) {
-        String ticketId = "T-" + ticketSeq.incrementAndGet();
-        if (platesInside.putIfAbsent(vehicle.getLicensePlate(), ticketId) != null) {
-            throw new IllegalStateException(vehicle.getLicensePlate() + " is already inside");
+    public synchronized Ticket enter(VehicleType vehicle) {
+        ParkingSpot spot = allocationStrategy.choose(freeSpots(), vehicle);
+        if (spot == null) {
+            throw new IllegalStateException("No spot available for " + vehicle);
         }
-
-        List<ParkingSpot> candidates = new ArrayList<>();
-        for (ParkingSpot spot : spots) {
-            if (spot.getType().canFit(vehicle.getType()) && !occupiedSpotIds.contains(spot.getId())) {
-                candidates.add(spot);
-            }
-        }
-        for (ParkingSpot spot : allocationStrategy.rank(candidates, vehicle.getType())) {
-            if (occupiedSpotIds.add(spot.getId())) {         // atomic claim; false = someone beat us to it
-                Ticket ticket = new Ticket(ticketId, spot.getId(), vehicle, clock.instant());
-                activeTickets.put(ticketId, ticket);
-                return ticket;
-            }
-        }
-        platesInside.remove(vehicle.getLicensePlate());       // undo: the car didn't get in
-        throw new IllegalStateException("No spot available for " + vehicle.getType());
+        occupiedSpotIds.add(spot.getId());
+        Ticket ticket = new Ticket("T-" + nextTicketNumber++, spot.getId(), vehicle, clock.instant());
+        activeTickets.put(ticket.getId(), ticket);
+        return ticket;
     }
 
-    // returns the fee in rupees
-    public long exit(String ticketId) {
-        Ticket ticket = activeTickets.remove(ticketId);       // atomic: a second exit finds nothing
+    // returns the fee in rupees.
+    // Atomic: the fee is worked out FIRST. If pricing fails, nothing has changed yet,
+    // so the ticket is still valid (no "spot freed but nobody charged").
+    public synchronized long exit(String ticketId) {
+        Ticket ticket = activeTickets.get(ticketId);
         if (ticket == null) throw new NoSuchElementException("Ticket not found or already used: " + ticketId);
-
         Duration parked = Duration.between(ticket.getEntryTime(), clock.instant());
-        long fee = pricingStrategy.fee(ticket.getVehicle().getType(), parked);
+        long fee = pricingStrategy.fee(ticket.getVehicleType(), parked);     // may throw: no state changed yet
+        activeTickets.remove(ticketId);                                     // removed = can't exit twice
         occupiedSpotIds.remove(ticket.getSpotId());
-        platesInside.remove(ticket.getVehicle().getLicensePlate());
         return fee;
     }
 
-    // for the "spots free" display board at the entrance
-    public int freeSpotsFor(Vehicle vehicle) {
+    // for the "spots free" display board
+    public synchronized int freeSpotsFor(VehicleType vehicle) {
         int free = 0;
-        for (ParkingSpot spot : spots) {
-            if (spot.getType().canFit(vehicle.getType()) && !occupiedSpotIds.contains(spot.getId())) free++;
-        }
+        for (ParkingSpot s : freeSpots()) if (s.getType().canFit(vehicle)) free++;
+        return free;
+    }
+
+    private List<ParkingSpot> freeSpots() {
+        List<ParkingSpot> free = new ArrayList<>();
+        for (ParkingSpot s : spots) if (!occupiedSpotIds.contains(s.getId())) free.add(s);
         return free;
     }
 }

@@ -35,10 +35,7 @@ public class FoodDeliveryDriver {
         app.addPartner(near);
         app.addPartner(far);
 
-        System.out.println("=== Search 'meg' ===");
-        app.searchRestaurants("meg").forEach(r -> System.out.println("  " + r.getName()));
-
-        System.out.println("\n=== Cart: one restaurant only ===");
+        System.out.println("=== Cart: one restaurant only ===");
         app.addToCart("alice", "R1", "I1", 2);
         app.addToCart("alice", "R1", "I2", 1);
         try { app.addToCart("alice", "R2", "I3", 1); }
@@ -49,7 +46,6 @@ public class FoodDeliveryDriver {
         biryani.setPrice(999);                                   // menu price changes AFTER ordering
         System.out.println("  " + o1.getId() + " " + o1.getItems() + " total ₹" + o1.getTotal()
                 + "  (expect ₹680, not affected by new price)");
-        System.out.println("  cart empty after order? " + app.getCart("alice").isEmpty());
 
         System.out.println("\n=== Illegal transition is rejected ===");
         try { app.deliver(o1.getId()); }

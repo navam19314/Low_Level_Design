@@ -6,18 +6,18 @@ public class Ticket {
 
     private final String id;
     private final String spotId;
-    private final Vehicle vehicle;
+    private final VehicleType vehicleType;
     private final Instant entryTime;
 
-    public Ticket(String id, String spotId, Vehicle vehicle, Instant entryTime) {
+    public Ticket(String id, String spotId, VehicleType vehicleType, Instant entryTime) {
         this.id = id;
         this.spotId = spotId;
-        this.vehicle = vehicle;
+        this.vehicleType = vehicleType;
         this.entryTime = entryTime;
     }
 
-    public String  getId()        { return id; }
-    public String  getSpotId()    { return spotId; }
-    public Vehicle getVehicle()   { return vehicle; }
-    public Instant getEntryTime() { return entryTime; }
+    public String      getId()          { return id; }
+    public String      getSpotId()      { return spotId; }
+    public VehicleType getVehicleType() { return vehicleType; }
+    public Instant     getEntryTime()   { return entryTime; }
 }

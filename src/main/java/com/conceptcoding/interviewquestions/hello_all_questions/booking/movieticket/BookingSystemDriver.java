@@ -1,16 +1,11 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Booking;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.City;
 import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Movie;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Screen;
 import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Showtime;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Theater;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,108 +15,57 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BookingSystemDriver {
 
     public static void main(String[] args) throws Exception {
-        // ---- Build catalog: City → Theater → Screen → Showtime ----
         Movie inception = new Movie("M1", "Inception");
-        Movie dune      = new Movie("M2", "Dune");
+        BookingSystem system = new BookingSystem();
+        system.addShowtime(new Showtime("S1", inception, LocalDateTime.of(2026, 10, 10, 19, 0), 10));   // 7 PM
+        system.addShowtime(new Showtime("S2", inception, LocalDateTime.of(2026, 10, 10, 22, 0), 10));   // 10 PM
 
-        Screen screen3 = new Screen("SC3", "Screen 3");
-        Screen screen5 = new Screen("SC5", "Screen 5");
+        System.out.println("=== Book seats 3 and 4 ===");
+        Booking b1 = system.book("S1", List.of(3, 4));
+        System.out.println("  " + b1.getId() + " → seats " + b1.getSeats() + " (expect B-1 → [3, 4])");
+        System.out.println("  free on S1: " + system.getAvailableSeats("S1") + " (no 3, 4)");
 
-        screen3.addShowtime(new Showtime("S1", screen3, inception, LocalDateTime.of(2026, 7, 1, 19, 0)));
-        screen3.addShowtime(new Showtime("S2", screen3, inception, LocalDateTime.of(2026, 7, 1, 22, 0)));
-        screen5.addShowtime(new Showtime("S3", screen5, dune,      LocalDateTime.of(2026, 7, 1, 20, 0)));
+        System.out.println("\n=== Rejections ===");
+        tryIt("seat 4 again", () -> system.book("S1", List.of(4)));
+        tryIt("seats 5, 4, 6 (4 is taken)", () -> system.book("S1", List.of(5, 4, 6)));
+        System.out.println("  seat 5 still free after that? " + system.getAvailableSeats("S1").contains(5) + " (expect true: all or nothing)");
+        tryIt("seat 11 on a 10-seat show", () -> system.book("S1", List.of(11)));
+        tryIt("seat 7 twice", () -> system.book("S1", List.of(7, 7)));
+        tryIt("no seats", () -> system.book("S1", List.of()));
+        tryIt("unknown show", () -> system.book("S9", List.of(1)));
 
-        Theater amc = new Theater("T1", "AMC");
-        amc.addScreen(screen3);
-        amc.addScreen(screen5);
+        System.out.println("\n=== Different show, same seat number ===");
+        System.out.println("  S2 seat 3 → " + system.book("S2", List.of(3)).getId() + " (allowed: different show)");
 
-        City bengaluru = new City("BLR", "Bengaluru");
-        bengaluru.addTheater(amc);
-
-        BookingSystem system = new BookingSystem(List.of(bengaluru));
-
-        System.out.println("--- Search 'inception' in Bengaluru ---");
-        for (Showtime s : system.searchMovies("BLR", "inception")) {
-            System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime()
-                    + " in " + s.getScreen().getName());
-        }
-
-        System.out.println("\n--- Browse AMC ---");
-        for (Showtime s : system.getShowtimesAtTheater(amc)) {
-            System.out.println("  " + s.getMovie().getTitle() + " @ " + s.getDatetime());
-        }
-
-        System.out.println("\n--- Available seats on S1 before booking ---");
-        List<String> before = system.getAvailableSeats("S1");
-        System.out.println("  " + before.size() + " seats free  (expect 100)");
-
-        System.out.println("\n--- Happy-path booking ---");
-        Booking b1 = system.book("S1", List.of("5", "6"));
-        System.out.println("Booking id: " + b1.getBookingId());
-
-        System.out.println("\n--- Available seats on S1 after booking seats 5,6 ---");
-        List<String> after = system.getAvailableSeats("S1");
-        System.out.println("  " + after.size() + " seats free  (expect 98)");
-        System.out.println("  seat 5 still listed? " + after.contains("5") + "  (expect false)");
-
-        System.out.println("\n--- Same seats again → IllegalStateException ---");
-        try { system.book("S1", List.of("5")); }
-        catch (IllegalStateException e) { System.out.println("Rejected: " + e.getMessage()); }
-
-        System.out.println("\n--- Partial booking is atomic: seat 6 taken → whole booking fails ---");
-        try { system.book("S1", List.of("7", "6", "8")); }
-        catch (IllegalStateException e) {
-            System.out.println("Rejected: " + e.getMessage());
-            System.out.println("Seat 7 still available? " + system.book("S1", List.of("7")).getBookingId().substring(0, 8) + "...");
-        }
-
-        System.out.println("\n--- Invalid seat id ---");
-        try { system.book("S1", List.of("not-a-seat")); }
-        catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
-
-        System.out.println("\n--- Same seat twice in one request ---");
-        try { system.book("S1", List.of("20", "20")); }
-        catch (IllegalArgumentException e) { System.out.println("Rejected: " + e.getMessage()); }
-
-        System.out.println("\n--- Unknown showtime ---");
-        try { system.book("nope", List.of("1")); }
-        catch (NoSuchElementException e) { System.out.println("Rejected: " + e.getMessage()); }
-
-        System.out.println("\n--- Concurrent booking on S2: 50 threads race for seat '10' ---");
-        concurrentRace(system, "S2", "10", /* threadCount */ 50);
-    }
-
-    private static void concurrentRace(BookingSystem system, String showtimeId,
-                                       String seat, int threadCount) throws Exception {
-        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
-        CountDownLatch ready = new CountDownLatch(threadCount);
-        CountDownLatch fire  = new CountDownLatch(1);
-        AtomicInteger successes = new AtomicInteger();
-        AtomicInteger conflicts = new AtomicInteger();
-        List<Throwable> unexpected = new ArrayList<>();
-
-        for (int i = 0; i < threadCount; i++) {
+        System.out.println("\n=== Concurrency: 50 people grab seat 1 on S1 at the same instant ===");
+        ExecutorService pool = Executors.newFixedThreadPool(50);
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicInteger won = new AtomicInteger(), lost = new AtomicInteger(), other = new AtomicInteger();
+        for (int i = 0; i < 50; i++) {
             pool.submit(() -> {
-                ready.countDown();
                 try {
-                    fire.await();
-                    system.book(showtimeId, List.of(seat));
-                    successes.incrementAndGet();
+                    go.await();
+                    system.book("S1", List.of(1));
+                    won.incrementAndGet();
                 } catch (IllegalStateException e) {
-                    conflicts.incrementAndGet();
-                } catch (Throwable t) {
-                    synchronized (unexpected) { unexpected.add(t); }
+                    lost.incrementAndGet();
+                } catch (Exception e) {
+                    other.incrementAndGet();
                 }
             });
         }
-
-        ready.await();                  // all threads at the barrier
-        fire.countDown();               // GO!
+        go.countDown();
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.SECONDS);
+        System.out.println("  won = " + won + " (expect 1), lost = " + lost + " (expect 49), other errors = " + other + " (expect 0)");
+    }
 
-        System.out.println("  successes = " + successes.get() + "  (expect 1)");
-        System.out.println("  conflicts = " + conflicts.get() + "  (expect " + (threadCount - 1) + ")");
-        System.out.println("  unexpected = " + unexpected.size() + "  (expect 0)");
+    private static void tryIt(String label, Runnable action) {
+        try {
+            action.run();
+            System.out.println("  " + label + ": ALLOWED ✗");
+        } catch (RuntimeException e) {
+            System.out.println("  " + label + ": rejected → " + e.getMessage());
+        }
     }
 }

@@ -1,5 +1,20 @@
 # Session Handoff — LLD Interview Prep Deck
 
+> **UPDATE 2026-10-08 (newest):** the owner prefers a SHORT format, with a base small enough to write in 30–40 min.
+> Done so far for **parkinglot, cabbooking, movieticket, inventory** (fooddelivery has the short 5-phase layout but not yet
+> sections 0 or the new extension cards):
+> - MD = **0 Plain words** (real-life picture, the 2–4 actions, real world → code table, only the 2–3 tricky
+>   points, one sample run) → **1 Requirements (~4)** → 2 Entities → 3 Class Design → 4 Implementation →
+>   **5 Extensibility** = a quick-revision table + one card per extension (Idea → visible code → Check → Say).
+> - Base code: `synchronized` + plain loops + `null` for "none"; advanced concurrency, extra entities and extra
+>   strategies live in the extension cards (code verified in a scratch compile first).
+> - cabbooking base: no Rider class (riderId string), no PricingStrategy (inline fare formula), x/y Location.
+>   movieticket base: only Movie, Showtime (Set<Integer> bookedSeats, per-show lock), Booking, BookingSystem;
+>   City/Theater/Screen/search, holds, payment, cancel, pricing, per-seat locks and DB are extension cards.
+>   inventory base: Warehouse (synchronized add/remove/get) + InventoryManager (ordered-lock transfer);
+>   alerts (Observer), reservations, multi-product, WarehouseChooser, reorder and DB are extension cards.
+> - The older 2026-10-07 notes below describe the long format and the old class lists for those problems.
+
 > **UPDATE 2026-10-07 (read this first; it supersedes §2's MD structure, §3's file list and every path below):**
 > - **Folders are grouped by problem kind**: `allocation/ booking/ matching/ state_machines/ pipelines/ policies/
 >   composition/ data_structures/ games/`. Packages are `hello_all_questions.<folder>.<problem>`. `logger_practice/`

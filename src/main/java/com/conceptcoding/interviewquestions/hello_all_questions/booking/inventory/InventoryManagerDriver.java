@@ -1,10 +1,7 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.booking.inventory;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.inventory.model.AlertListener;
-
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -13,168 +10,77 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class InventoryManagerDriver {
 
     public static void main(String[] args) throws Exception {
-        scenarioBasics();
-        scenarioAlertCrossing();
-        scenarioRejectNegative();
-        scenarioConcurrentRemoval();
-        scenarioConcurrentBidirectionalTransfer();
-        scenarioTransferAlertsFireOutsideLocks();
+        InventoryManager inv = new InventoryManager(List.of("BLR", "DEL"));
+        inv.addStock("BLR", "iphone", 10);
+        inv.addStock("DEL", "iphone", 2);
+
+        System.out.println("=== Remove: never below zero ===");
+        System.out.println("  remove 12 from BLR (has 10): " + inv.removeStock("BLR", "iphone", 12) + " (expect false)");
+        System.out.println("  BLR still has " + inv.getStock("BLR", "iphone") + " (expect 10)");
+        System.out.println("  remove 4 from BLR: " + inv.removeStock("BLR", "iphone", 4) + ", left " + inv.getStock("BLR", "iphone") + " (expect true, 6)");
+
+        System.out.println("\n=== Which warehouses can ship 5? ===");
+        System.out.println("  " + inv.warehousesWith("iphone", 5) + " (expect [BLR])");
+
+        System.out.println("\n=== Transfer ===");
+        System.out.println("  BLR → DEL 5: " + inv.transfer("iphone", "BLR", "DEL", 5)
+                + ", BLR " + inv.getStock("BLR", "iphone") + ", DEL " + inv.getStock("DEL", "iphone") + " (expect true, 1, 7)");
+        System.out.println("  BLR → DEL 3 (BLR has 1): " + inv.transfer("iphone", "BLR", "DEL", 3)
+                + ", BLR " + inv.getStock("BLR", "iphone") + ", DEL " + inv.getStock("DEL", "iphone") + " (expect false, 1, 7)");
+
+        System.out.println("\n=== Rejections ===");
+        tryIt("transfer to the same warehouse", () -> inv.transfer("iphone", "BLR", "BLR", 1));
+        tryIt("remove 0", () -> inv.removeStock("BLR", "iphone", 0));
+        tryIt("unknown warehouse", () -> inv.addStock("MUM", "iphone", 1));
+
+        lastUnits();
+        oppositeTransfers();
     }
 
-    // ---- 1. Basic CRUD + availability across warehouses --------
-    private static void scenarioBasics() {
-        System.out.println("=== Scenario 1: basic CRUD + getWarehousesWithAvailability ===");
-        InventoryManager mgr = new InventoryManager(List.of("EAST", "WEST", "NORTH"));
-
-        mgr.addStock("EAST",  "WIDGET", 50);
-        mgr.addStock("WEST",  "WIDGET", 30);
-        mgr.addStock("NORTH", "WIDGET",  5);
-
-        System.out.println("  Warehouses with >= 25 WIDGETs: " +
-                mgr.getWarehousesWithAvailability("WIDGET", 25) + "  (expect [EAST, WEST])");
-
-        System.out.println("  Remove 20 from EAST: " + mgr.removeStock("EAST", "WIDGET", 20)
-                + " → EAST now has " + mgr.getStock("EAST", "WIDGET") + " (expect 30)");
-        System.out.println();
+    // 50 buyers, 20 units: exactly 20 succeed and stock ends at 0.
+    private static void lastUnits() throws Exception {
+        System.out.println("\n=== Concurrency: 50 buyers, 20 units ===");
+        InventoryManager inv = new InventoryManager(List.of("BLR"));
+        inv.addStock("BLR", "ps5", 20);
+        AtomicInteger sold = new AtomicInteger();
+        runAtOnce(50, i -> { if (inv.removeStock("BLR", "ps5", 1)) sold.incrementAndGet(); });
+        System.out.println("  sold = " + sold + " (expect 20), left = " + inv.getStock("BLR", "ps5") + " (expect 0)");
     }
 
-    // ---- 2. Threshold-crossing alert behavior (the core observer test) --------
-    private static void scenarioAlertCrossing() {
-        System.out.println("=== Scenario 2: alert fires ONCE per downward crossing; resets on recovery ===");
-        InventoryManager mgr = new InventoryManager(List.of("EAST"));
-        CountingAlertListener counter = new CountingAlertListener();
-        mgr.setLowStockAlert("EAST", "WIDGET", /* threshold */ 10, counter);
-
-        mgr.addStock("EAST", "WIDGET", 15);     // 0 → 15  : no fire (never above threshold? actually was below; check below)
-        System.out.println("  After +15 (0→15): fires=" + counter.fires.get() + " (expect 0 — went UP across, no downward crossing)");
-
-        mgr.removeStock("EAST", "WIDGET", 6);   // 15 → 9 : CROSS downward → fire
-        System.out.println("  After -6  (15→9): fires=" + counter.fires.get() + " (expect 1 — first downward crossing)");
-
-        mgr.removeStock("EAST", "WIDGET", 2);   // 9 → 7  : already below, no NEW crossing
-        System.out.println("  After -2  (9→7):  fires=" + counter.fires.get() + " (expect 1 — no duplicate)");
-
-        mgr.addStock("EAST", "WIDGET", 15);     // 7 → 22 : recovery, no downward crossing
-        System.out.println("  After +15 (7→22): fires=" + counter.fires.get() + " (expect 1 — still no upward fire)");
-
-        mgr.removeStock("EAST", "WIDGET", 13);  // 22 → 9 : CROSS downward AGAIN → fire
-        System.out.println("  After -13 (22→9): fires=" + counter.fires.get() + " (expect 2 — natural reset on recovery)");
-        System.out.println();
+    // 100 transfers at once, half BLR→DEL and half DEL→BLR: no deadlock, and the total never changes.
+    private static void oppositeTransfers() throws Exception {
+        System.out.println("\n=== Concurrency: 100 opposite transfers ===");
+        InventoryManager inv = new InventoryManager(List.of("BLR", "DEL"));
+        inv.addStock("BLR", "tv", 500);
+        inv.addStock("DEL", "tv", 500);
+        boolean finished = runAtOnce(100, i -> {
+            if (i % 2 == 0) inv.transfer("tv", "BLR", "DEL", 3);
+            else            inv.transfer("tv", "DEL", "BLR", 3);
+        });
+        int total = inv.getStock("BLR", "tv") + inv.getStock("DEL", "tv");
+        System.out.println("  finished in time (no deadlock)? " + finished + ", total = " + total + " (expect true, 1000)");
     }
 
-    // ---- 3. Reject operations that would violate "no negative inventory" --------
-    private static void scenarioRejectNegative() {
-        System.out.println("=== Scenario 3: reject removes / transfers that would go negative ===");
-        InventoryManager mgr = new InventoryManager(List.of("EAST", "WEST"));
-        mgr.addStock("EAST", "WIDGET", 2);
+    interface Task { void run(int i); }
 
-        boolean tooBig = mgr.removeStock("EAST", "WIDGET", 10);
-        System.out.println("  Remove 10 from EAST (has 2): allowed=" + tooBig
-                + " → EAST still " + mgr.getStock("EAST", "WIDGET") + " (expect 2, unchanged)");
-
-        boolean tooBigTransfer = mgr.transfer("WIDGET", "EAST", "WEST", 10);
-        System.out.println("  Transfer 10 EAST→WEST (has 2): allowed=" + tooBigTransfer
-                + " → EAST=" + mgr.getStock("EAST", "WIDGET") + " WEST=" + mgr.getStock("WEST", "WIDGET")
-                + " (expect 2, 0 — atomic rollback)");
-        System.out.println();
-    }
-
-    // ---- 4. Concurrent removal — exactly stock-count succeed --------
-    private static void scenarioConcurrentRemoval() throws Exception {
-        System.out.println("=== Scenario 4: 50 threads race to remove from a warehouse with 20 stock ===");
-        InventoryManager mgr = new InventoryManager(List.of("EAST"));
-        mgr.addStock("EAST", "WIDGET", 20);
-
-        int threads = 50;
+    private static boolean runAtOnce(int threads, Task task) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
-        CountDownLatch ready = new CountDownLatch(threads);
-        CountDownLatch fire  = new CountDownLatch(1);
-        AtomicInteger ok = new AtomicInteger(), denied = new AtomicInteger();
-
-        for (int i = 0; i < threads; i++) {
-            pool.submit(() -> {
-                ready.countDown();
-                try { fire.await(); } catch (InterruptedException e) { return; }
-                if (mgr.removeStock("EAST", "WIDGET", 1)) ok.incrementAndGet();
-                else                                      denied.incrementAndGet();
-            });
-        }
-        ready.await();
-        fire.countDown();
-        pool.shutdown();
-        pool.awaitTermination(5, TimeUnit.SECONDS);
-
-        System.out.println("  ok=" + ok.get() + " denied=" + denied.get()
-                + " stock-left=" + mgr.getStock("EAST", "WIDGET"));
-        System.out.println("  expect: ok=20, denied=30, stock-left=0     (per-warehouse lock holds)");
-        System.out.println(ok.get() == 20 && denied.get() == 30 && mgr.getStock("EAST", "WIDGET") == 0
-                ? "  ✓ atomicity preserved" : "  ✗ RACE — counts don't match!");
-        System.out.println();
-    }
-
-    // ---- 5. Bidirectional concurrent transfers — would deadlock WITHOUT lock ordering --------
-    private static void scenarioConcurrentBidirectionalTransfer() throws Exception {
-        System.out.println("=== Scenario 5: 100 concurrent transfers A↔B (would deadlock without ordering) ===");
-        InventoryManager mgr = new InventoryManager(List.of("A", "B"));
-        mgr.addStock("A", "WIDGET", 1000);
-        mgr.addStock("B", "WIDGET", 1000);
-
-        int threads = 100;
-        ExecutorService pool = Executors.newFixedThreadPool(threads);
-        CountDownLatch ready = new CountDownLatch(threads);
-        CountDownLatch fire  = new CountDownLatch(1);
-        AtomicInteger successes = new AtomicInteger();
-
+        CountDownLatch go = new CountDownLatch(1);
         for (int i = 0; i < threads; i++) {
             final int n = i;
-            pool.submit(() -> {
-                ready.countDown();
-                try { fire.await(); } catch (InterruptedException e) { return; }
-                String from = (n % 2 == 0) ? "A" : "B";     // 50 threads each direction
-                String to   = (n % 2 == 0) ? "B" : "A";
-                if (mgr.transfer("WIDGET", from, to, 1)) successes.incrementAndGet();
-            });
+            pool.submit(() -> { go.await(); task.run(n); return null; });
         }
-        ready.await();
-        fire.countDown();
+        go.countDown();
         pool.shutdown();
-        boolean finished = pool.awaitTermination(5, TimeUnit.SECONDS);
-
-        int aStock = mgr.getStock("A", "WIDGET");
-        int bStock = mgr.getStock("B", "WIDGET");
-
-        System.out.println("  finished in time: " + finished + "  (true → no deadlock)");
-        System.out.println("  successful transfers: " + successes.get() + "  (expect 100)");
-        System.out.println("  A=" + aStock + "  B=" + bStock + "  total=" + (aStock + bStock)
-                + "  (total expect 2000 — no inventory created or destroyed)");
-        System.out.println(finished && successes.get() == 100 && (aStock + bStock) == 2000
-                ? "  ✓ ordered lock acquisition prevented deadlock + preserved invariant"
-                : "  ✗ something raced or deadlocked");
+        return pool.awaitTermination(5, TimeUnit.SECONDS);
     }
 
-    // Thread-safe counter for the alert-crossing test.
-    static class CountingAlertListener implements AlertListener {
-        final AtomicInteger fires = new AtomicInteger();
-        final List<String> history = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void onLowStock(String warehouseId, String productId, int currentQuantity) {
-            fires.incrementAndGet();
-            history.add(warehouseId + "/" + productId + "=" + currentQuantity);
+    private static void tryIt(String label, Runnable action) {
+        try {
+            action.run();
+            System.out.println("  " + label + ": ALLOWED ✗");
+        } catch (RuntimeException e) {
+            System.out.println("  " + label + ": rejected → " + e.getMessage());
         }
-    }
-
-    // Regression: a transfer holds both warehouse locks; its low-stock alert must fire only after
-    // both are released, or a slow / re-entrant listener blocks or deadlocks both warehouses.
-    private static void scenarioTransferAlertsFireOutsideLocks() {
-        System.out.println("=== Transfer alerts fire after both locks are released ===");
-        InventoryManager mgr = new InventoryManager(java.util.List.of("BLR", "DEL"));
-        mgr.addStock("BLR", "iphone", 10);
-        Warehouse blr = mgr.warehouse("BLR"), del = mgr.warehouse("DEL");
-        mgr.setLowStockAlert("BLR", "iphone", 5, (w, p, q) ->
-                System.out.println("  alert " + w + " " + p + "=" + q + " | holding BLR lock? " + Thread.holdsLock(blr)
-                        + ", DEL lock? " + Thread.holdsLock(del) + " (expect false, false)"));
-        mgr.transfer("iphone", "BLR", "DEL", 7);       // BLR 10 → 3 crosses below 5
-        System.out.println();
     }
 }

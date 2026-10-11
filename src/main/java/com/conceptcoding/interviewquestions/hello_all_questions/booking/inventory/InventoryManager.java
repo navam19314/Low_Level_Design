@@ -1,101 +1,73 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.booking.inventory;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.inventory.model.AlertListener;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-// Orchestrator + facade. Owns warehouses (fixed at startup) and routes operations
-// to them. The interesting method is transfer() — coordinates two warehouses
-// atomically with ORDERED LOCK ACQUISITION to prevent deadlock.
-//
-// All other methods are thin delegation: look up warehouse(s), call the right
-// method, return the result. Validation happens at the boundary (null warehouse,
-// non-positive quantity).
+// The service callers use. The warehouses are created once, in the constructor, and the map
+// is never changed after that, so reading it from many threads is safe.
+// The locks live on each Warehouse; only transfer() needs two of them.
 public class InventoryManager {
 
-    private final Map<String, Warehouse> warehouses;
+    private final Map<String, Warehouse> warehouses = new HashMap<>();
 
     public InventoryManager(List<String> warehouseIds) {
-        this.warehouses = new HashMap<>();
         for (String id : warehouseIds) {
             warehouses.put(id, new Warehouse(id));
         }
     }
 
     public void addStock(String warehouseId, String productId, int quantity) {
-        warehouseOrThrow(warehouseId).addStock(productId, quantity);
+        checkQuantity(quantity);
+        findWarehouse(warehouseId).addStock(productId, quantity);
     }
 
     public boolean removeStock(String warehouseId, String productId, int quantity) {
-        Warehouse w = warehouses.get(warehouseId);
-        return w != null && w.removeStock(productId, quantity);
+        checkQuantity(quantity);
+        return findWarehouse(warehouseId).removeStock(productId, quantity);
     }
 
     public int getStock(String warehouseId, String productId) {
-        return warehouseOrThrow(warehouseId).getStock(productId);
+        return findWarehouse(warehouseId).getStock(productId);
     }
 
-    public List<String> getWarehousesWithAvailability(String productId, int quantity) {
+    // which warehouses can ship this many right now
+    public List<String> warehousesWith(String productId, int quantity) {
         List<String> result = new ArrayList<>();
-        for (Map.Entry<String, Warehouse> e : warehouses.entrySet()) {
-            if (e.getValue().checkAvailability(productId, quantity)) {
-                result.add(e.getKey());
-            }
+        for (Warehouse w : warehouses.values()) {
+            if (w.getStock(productId) >= quantity) result.add(w.getId());
         }
         return result;
     }
 
-    public void setLowStockAlert(String warehouseId, String productId, int threshold, AlertListener listener) {
-        warehouseOrThrow(warehouseId).setLowStockAlert(productId, threshold, listener);
-    }
-
-    // Atomically move stock from fromId to toId.
-    //
-    // Why ORDERED lock acquisition: thread A doing A→B and thread B doing B→A
-    // would otherwise deadlock — A holds(A) and waits for B; B holds(B) and waits
-    // for A. Acquiring locks in a globally consistent order (compareTo) breaks the
-    // cycle: both threads acquire the alphabetically-first warehouse first.
-    //
-    // Java's synchronized is reentrant, so calls into removeStock/addStock (which
-    // themselves use synchronized(this)) don't re-block — they re-enter the lock
-    // the current thread already holds.
+    // Move stock in one step: never "taken from A but not yet in B".
+    // Both warehouses are locked in id ORDER, so A→B and B→A at the same moment can't deadlock.
     public boolean transfer(String productId, String fromId, String toId, int quantity) {
-        if (quantity <= 0)        return false;
-        if (fromId.equals(toId))  return false;
+        checkQuantity(quantity);
+        if (fromId.equals(toId)) throw new IllegalArgumentException("Same warehouse: " + fromId);
+        Warehouse from = findWarehouse(fromId);
+        Warehouse to = findWarehouse(toId);
 
-        Warehouse from = warehouses.get(fromId);
-        Warehouse to   = warehouses.get(toId);
-        if (from == null || to == null) return false;
-
-        // Order locks by warehouse-id string to break the deadlock cycle.
-        Warehouse first  = fromId.compareTo(toId) < 0 ? from : to;
+        Warehouse first = fromId.compareTo(toId) < 0 ? from : to;     // smaller id first, always
         Warehouse second = (first == from) ? to : from;
-
-        List<Warehouse.PendingAlert> fromAlerts;
-        List<Warehouse.PendingAlert> toAlerts;
         synchronized (first) {
             synchronized (second) {
-                fromAlerts = from.removeStockCollectingAlerts(productId, quantity);
-                if (fromAlerts == null) return false;        // insufficient stock → no state change
-                toAlerts = to.addStockCollectingAlerts(productId, quantity);
+                if (!from.removeStock(productId, quantity)) return false;   // not enough: nothing moved
+                to.addStock(productId, quantity);
+                return true;
             }
         }
-        // both locks released: a slow or re-entrant listener can't block or deadlock the warehouses
-        from.fireAll(fromAlerts);
-        to.fireAll(toAlerts);
-        return true;
     }
 
-    // for tests: lets the driver check which locks are held when alerts fire
-    Warehouse warehouse(String warehouseId) { return warehouseOrThrow(warehouseId); }
+    private void checkQuantity(int quantity) {
+        if (quantity <= 0) throw new IllegalArgumentException("Quantity must be positive: " + quantity);
+    }
 
-    private Warehouse warehouseOrThrow(String warehouseId) {
+    private Warehouse findWarehouse(String warehouseId) {
         Warehouse w = warehouses.get(warehouseId);
-        if (w == null) throw new NoSuchElementException("Unknown warehouse: " + warehouseId);
+        if (w == null) throw new NoSuchElementException("Unknown warehouse " + warehouseId);
         return w;
     }
 }

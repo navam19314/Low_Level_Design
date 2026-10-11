@@ -5,19 +5,8 @@ import com.conceptcoding.interviewquestions.hello_all_questions.matching.cabbook
 
 import java.util.List;
 
-// "Given a pickup location and a pool of candidate drivers, return an ORDERED
-// list of drivers to try, best first."
-//
-// Returns a list — not a single driver — because the top choice might lose
-// the AVAILABLE → ON_TRIP race; the service then tries the next candidate.
-//
-// Implementations:
-//   - NearestDriverStrategy — purely distance-based
-//   - (future) HighestRatedStrategy, SurgeAwareStrategy, RegionedStrategy, ...
-//
-// This is THE design seam of the system. New matching policies (e.g.
-// "prefer drivers heading toward the rider's destination") slot in as new
-// implementations without touching CabBookingService.
+// Strategy: which available driver gets this ride? Nearest today; best-rated or least-busy tomorrow.
 public interface DriverMatchingStrategy {
-    List<Driver> rankCandidates(Location pickup, List<Driver> availableDrivers);
+    // returns the chosen driver, or null if there is none
+    Driver match(Location pickup, List<Driver> availableDrivers);
 }

@@ -3,9 +3,6 @@ package com.conceptcoding.interviewquestions.hello_all_questions.matching.foodde
 import java.util.ArrayList;
 import java.util.List;
 
-// Restaurant, rider and customer can all act on the same order at once
-// (customer cancels while the rider picks up), so status changes are synchronized:
-// exactly one of two conflicting moves wins, the other gets IllegalStateException.
 public class Order {
 
     private final String id;
@@ -27,17 +24,17 @@ public class Order {
         this.total = total;
     }
 
-    public synchronized void moveTo(OrderStatus next) {
+    public void moveTo(OrderStatus next) {
         if (!status.canMoveTo(next)) {
             throw new IllegalStateException("Order " + id + ": cannot go from " + status + " to " + next);
         }
         status = next;
     }
 
-    public synchronized void assignPartner(String partnerId) { this.partnerId = partnerId; }
-
-    public synchronized OrderStatus getStatus()    { return status; }
-    public synchronized String      getPartnerId() { return partnerId; }
+    // waiting for a rider: accepted or ready, and nobody assigned yet
+    public boolean needsPartner() {
+        return partnerId == null && (status == OrderStatus.ACCEPTED || status == OrderStatus.READY);
+    }
 
     public String          getId()               { return id; }
     public String          getCustomerId()       { return customerId; }
@@ -45,4 +42,7 @@ public class Order {
     public Location        getDeliveryLocation() { return deliveryLocation; }
     public List<OrderItem> getItems()            { return new ArrayList<>(items); }
     public long            getTotal()            { return total; }
+    public OrderStatus     getStatus()           { return status; }
+    public String          getPartnerId()        { return partnerId; }
+    public void            setPartnerId(String partnerId) { this.partnerId = partnerId; }
 }

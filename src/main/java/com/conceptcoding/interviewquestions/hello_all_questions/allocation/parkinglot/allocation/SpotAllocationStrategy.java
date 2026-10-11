@@ -5,8 +5,9 @@ import com.conceptcoding.interviewquestions.hello_all_questions.allocation.parki
 
 import java.util.List;
 
-// Strategy: which free spot should this vehicle get?
-// Returns candidates best-first; the lot claims the first one nobody else grabbed meanwhile.
+// Strategy: which free spot should this vehicle get? Smallest-fit today; nearest-to-lift,
+// lowest-floor, EV-first tomorrow, each one new class.
 public interface SpotAllocationStrategy {
-    List<ParkingSpot> rank(List<ParkingSpot> freeFittingSpots, VehicleType vehicle);
+    // returns the chosen spot, or null if no free spot fits this vehicle
+    ParkingSpot choose(List<ParkingSpot> freeSpots, VehicleType vehicle);
 }

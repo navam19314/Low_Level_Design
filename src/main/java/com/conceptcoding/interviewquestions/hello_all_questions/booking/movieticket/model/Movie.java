@@ -1,7 +1,5 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model;
 
-// Searchable entity. ID + title; immutable once constructed.
-// ID exists because two movies might share a title (remakes, re-releases).
 public class Movie {
 
     private final String id;

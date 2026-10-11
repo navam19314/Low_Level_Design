@@ -1,94 +1,38 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Booking;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.City;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Screen;
 import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Showtime;
-import com.conceptcoding.interviewquestions.hello_all_questions.booking.movieticket.model.Theater;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
-// Orchestrator + facade. Owns cities (each holding theaters, each holding showtimes)
-// and ONE index — showtimesById — so book() resolves a showtime id in O(1).
-// Search scans showtimes within one city and filters by title.
-//
-// The concurrency-interesting code lives on Showtime. BookingSystem just creates
-// the Booking and hands it off. Cancellation is a Step-5 extension.
+// The service the app calls. It finds the show and lets the SHOW do the booking under its own lock.
+// No lock here: a global lock would make every show in the country wait for every other.
 public class BookingSystem {
 
-    private final Map<String, City>      citiesById;
-//    helper for doing bookings in O(1)
-    private final Map<String, Showtime>  showtimesById;
+    private final Map<String, Showtime> showtimes = new ConcurrentHashMap<>();   // read by many threads
+    private final AtomicInteger nextBookingNumber = new AtomicInteger(1);        // no lock here, so atomic
 
-    public BookingSystem(List<City> cities) {
-        this.citiesById    = new HashMap<>();
-        this.showtimesById = new HashMap<>();
-        for (City city : cities) {
-            citiesById.put(city.getId(), city);
-            // Ask the city for its showtimes — don't walk the hierarchy from here.
-            for (Showtime showtime : city.getAllShowtimes()) {
-                showtimesById.put(showtime.getId(), showtime);
-            }
-        }
+    public void addShowtime(Showtime showtime) {
+        showtimes.put(showtime.getId(), showtime);
     }
 
-    // Search movies by title within a specific city (BookMyShow-style — city first).
-    // Direct walk: city -> theaters -> screens -> showtimes, filter by title.
-    // (A stricter Law-of-Demeter version would push this filter down through each
-    // level instead of reaching into Movie from here — that's a Step-5 talking point.)
-    public List<Showtime> searchMovies(String cityId, String title) {
-        if (title == null || title.isEmpty()) return new ArrayList<>();
-        City city = citiesById.get(cityId);
-        if (city == null) return new ArrayList<>();
-
-        String query = title.toLowerCase();
-        List<Showtime> results = new ArrayList<>();
-        for (Theater theater : city.getTheaters()) {
-            for (Screen screen : theater.getScreens()) {
-                for (Showtime s : screen.getShowtimes()) {
-                    if (s.getMovie().getTitle().toLowerCase().contains(query)) {
-                        results.add(s);
-                    }
-                }
-            }
-        }
-        return results;
+    public List<Integer> getAvailableSeats(String showtimeId) {
+        return findShowtime(showtimeId).getAvailableSeats();
     }
 
-    public List<Showtime> getShowtimesAtTheater(Theater theater) {
-        if (theater == null) return new ArrayList<>();
-        return theater.getShowtimes();   // already returns a fresh list — no need to copy again
+    public Booking book(String showtimeId, List<Integer> seats) {
+        Showtime showtime = findShowtime(showtimeId);
+        showtime.book(seats);                                  // atomic; throws if any seat is taken
+        return new Booking("B-" + nextBookingNumber.getAndIncrement(), showtimeId, seats);
     }
 
-    // The caller must pick specific seatIds before calling book() — this is how they
-    // find out what's free. Throws on unknown showtime, same as book(), since this is
-    // an exact-id lookup, not an exploratory query.
-    public List<String> getAvailableSeats(String showtimeId) {
-        Showtime showtime = showtimesById.get(showtimeId);
-        if (showtime == null) {
-            throw new NoSuchElementException("Showtime not found: " + showtimeId);
-        }
-        return showtime.getAvailableSeats();
-    }
-
-    // Create the Booking up front (just a data object, no state change yet),
-    // then hand it to Showtime for atomic check+store. If unavailable, the exception
-    // propagates and no state changes anywhere.
-    public Booking book(String showtimeId, List<String> seatIds) {
-        if (showtimeId == null || seatIds == null || seatIds.isEmpty()) {
-            throw new IllegalArgumentException("Invalid booking request");
-        }
-        Showtime showtime = showtimesById.get(showtimeId);
-        if (showtime == null) {
-            throw new NoSuchElementException("Showtime not found: " + showtimeId);
-        }
-        Booking booking = new Booking(UUID.randomUUID().toString(), seatIds);
-        showtime.book(booking);                          // atomic — may throw
-        return booking;
+    private Showtime findShowtime(String showtimeId) {
+        Showtime showtime = showtimes.get(showtimeId);
+        if (showtime == null) throw new NoSuchElementException("Unknown show " + showtimeId);
+        return showtime;
     }
 }
