@@ -1,21 +1,62 @@
-# Food Delivery (Swiggy / Zomato lite)
+# Food Delivery (Swiggy / Zomato)
 
-> 40–45 min round. **Reported at Ethos.** Phases: **Requirements (5) → Entities (3) → Class Design (10–15) → Implementation (10–15) → Extensibility (5)**.
-> Sister problem: [Cab Booking](../cabbooking/INTERVIEW_WALKTHROUGH.md) (the same match → claim → lifecycle idea).
+> 30–40 min round. **Reported at Ethos.** Phases: **Requirements (5) → Entities (3) → Class Design (10–15) → Implementation (10) → Extensibility (5)**.
+> Sister problem: [Cab Booking](../cabbooking/INTERVIEW_WALKTHROUGH.md), the same "pick the nearest free one, then run a lifecycle" idea.
+
+---
+
+## 0. The problem in plain words (read first, don't say it in the interview)
+
+**Picture ordering on Swiggy.** You pick dishes from **one** restaurant and place the order. The restaurant accepts, and the app sends the **nearest free rider**. The rider picks up the food and delivers it, and is then free for the next order. You can cancel until the rider picks up the food.
+
+**The whole system is 5 actions:**
+```
+Customer    →  placeOrder(restaurant, {biryani: 2})  → PLACED, prices copied into the order
+Restaurant  →  acceptOrder(order)                     → ACCEPTED + the nearest free rider
+Rider       →  pickUp(order)                          → PICKED_UP
+Rider       →  deliver(order)                         → DELIVERED, the rider is free again
+Customer    →  cancel(order)                          → only before pickup; the rider is free again
+```
+
+**Real world → code**
+| In the real world | In the code |
+|---|---|
+| A restaurant and its menu | `Restaurant` (location, items) + `MenuItem` (price, available) |
+| Your order | `Order`: items, total, status, rider |
+| A line on the bill: "2 × Biryani @ ₹320" | `OrderItem`: a **copy** of the name and price |
+| Placed → Accepted → Picked up → Delivered | `OrderStatus` with `canMoveTo` |
+| A delivery rider | `DeliveryPartner`: location, free or busy |
+| How the app picks a rider | `PartnerAssignmentStrategy` (nearest) |
+
+**Only 3 things are tricky:**
+1. **Copy the price into the order.** If the restaurant changes biryani from ₹320 to ₹999 after you order, your bill must stay ₹680. So `OrderItem` keeps its own copy of the name and price.
+2. **Two restaurants accept at the same moment, and one rider is nearest to both.** Only one may get that rider, so the methods are `synchronized`.
+3. **An order only moves forward.** You can't deliver food that was never picked up, or cancel food that's already on the road. `canMoveTo` lists the legal moves.
+
+**Picture this run before you start coding:**
+```
+Ravi is 1 km from the restaurant, Asha 8 km
+Alice orders 2 biryani + 1 raita     → ₹680; then the menu changes biryani to ₹999 → Alice still pays ₹680
+Restaurant accepts Alice's order     → Ravi (nearest)
+Bob's order accepted                 → Asha (Ravi is busy)
+Carol's order accepted               → "No rider free", stays PLACED
+Alice: cancel after pickup           → refused;  delivered → Ravi free, now at Alice's door
+Bob cancels                          → Asha free
+```
 
 ---
 
 ## 1. Requirements (~5 min)
 
-**Ask:** a cart from one restaurant only? Which order statuses? Who can cancel, and until when? How is a rider chosen? What if no rider is free?
+**Ask:** one restaurant per order? What happens if the price changes after ordering? When is the rider assigned? Until when can you cancel? Many orders at once?
 
 ```
-1. Cart (one restaurant only) → placeOrder copies item prices into the order
-2. Order: PLACED → ACCEPTED → READY → PICKED_UP → DELIVERED; cancel any time before pickup
-3. On accept, assign the nearest free rider; if none is free, the order waits for the next free rider
-4. Reject illegal moves (deliver before pickup, cancel after pickup); safe with many users at once
+1. placeOrder(customer, restaurant, items) → total from the CURRENT prices, copied into the order
+2. acceptOrder → the nearest free rider is assigned (if nobody is free: an error, the order stays PLACED)
+3. Order: PLACED → ACCEPTED → PICKED_UP → DELIVERED; cancel only before pickup
+4. Safe with many orders at once (a rider never gets two orders)
 
-Out of scope: payment, fees/coupons, search, ratings, live tracking
+Out of scope: cart, READY status, waiting for a rider, delivery fee / coupons, notifications, payment
 ```
 
 ---
@@ -23,72 +64,77 @@ Out of scope: payment, fees/coupons, search, ratings, live tracking
 ## 2. Entities & Relationships (~3 min)
 
 ```
-FoodDeliveryService (orchestrator)
-   ├── Restaurant ── MenuItem (price, available)
-   ├── Cart (per user) ── itemId → qty
-   ├── Order ── OrderItem (a COPY of name + price) · OrderStatus · partnerId
-   ├── DeliveryPartner (location, available)
+FoodDeliveryService
+   ├── Restaurant ── MenuItem (many)
+   ├── Order ── OrderItem (many: copied name + price)
+   │     └── DeliveryPartner (once accepted)
+   ├── DeliveryPartner (many)
    └── PartnerAssignmentStrategy   "which rider"
 ```
-- **Legal order moves** live in `OrderStatus.canMoveTo`; the order enforces them in `moveTo`.
-- **The one-restaurant rule** lives in `Cart`, which owns its items.
-- **`OrderItem` copies the price**, so a later menu change doesn't change an old order.
-- **No class** for Customer (an id is enough), Payment, or Address.
+- **One order = one restaurant**, because `placeOrder` takes a single restaurant id. That gives the "one restaurant" rule for free.
+- **No Cart or Customer class in the base.** The app sends the chosen items, and a customer is just an id.
 
 ---
 
-## 3. Class Design (~10–15 min)
+## 3. Class Design (~10 min)
 
 ```
 FoodDeliveryService
-  state:     restaurants, partners, carts (userId → Cart), orders, assignmentStrategy
-  behaviour: addToCart · placeOrder · cancel           (customer)
-             acceptOrder · markReady                   (restaurant)
-             pickUp · deliver                          (rider)
+  behaviour: placeOrder(customer, restaurant, items, deliveryLocation) → Order · acceptOrder · pickUp · deliver · cancel
 
-Restaurant       id, name, location, menu            getItem(itemId)
-MenuItem         id, name, price, available
-Cart             restaurantId, itemId → qty          add(restaurantId, itemId, qty) · clear
-Order            id, customer, restaurant, items, total, status, partnerId   moveTo(next) · needsPartner()
-OrderItem        itemId, name, unitPrice, quantity   subtotal()
-OrderStatus      PLACED, ACCEPTED, READY, PICKED_UP, DELIVERED, CANCELLED   canMoveTo(next)
-DeliveryPartner  id, name, location, available
+Restaurant        id, name, location, menu (id → MenuItem)       getItem(id)
+MenuItem          id, name, price, available
+Order             id, customerId, restaurantId, deliveryLocation, items, total, status, partner     moveTo(next)
+OrderItem         itemId, name, unitPrice, quantity               subtotal()
+OrderStatus       PLACED, ACCEPTED, PICKED_UP, DELIVERED, CANCELLED      canMoveTo(next)
+DeliveryPartner   id, name, location, available                   finishDelivery(dropPoint)
+Location          x, y                                            distanceTo(other)
 
-PartnerAssignmentStrategy   choose(freePartners, pickup) → partner or null   ← NearestPartnerStrategy
+PartnerAssignmentStrategy   choose(freePartners, pickup) → rider or null   ← NearestPartnerStrategy
 ```
-- **Order status is an enum** with `canMoveTo`, not the State pattern: statuses only limit the next move.
-- **Strategy** for rider choice, because the business will change it.
-- **Thread safety:** every service method is `synchronized`, so one rider never gets two orders.
+- **Thread safety:** every service method is `synchronized`.
+
+### Design patterns: the problem → the fix (how to say it)
+**Strategy for choosing a rider.**
+*Problem:* the rule changes: nearest today, best-rated or fewest deliveries tomorrow. *Without it:* `if (mode == ...)` branches inside `acceptOrder`. *With it:* `acceptOrder` asks `assignmentStrategy.choose(freeRiders, restaurantLocation)`, and a new rule is a new class.
+**Say:** *"The service decides **when** to assign a rider; the strategy decides **which** one."*
+
+**Enum + `canMoveTo` for the order status.**
+*Problem:* what's allowed depends on the status. *Without it:* `if` checks in every method. *With it:* every change goes through `moveTo`, and there's one list of legal moves.
+**Say:** *"The statuses only limit the next move, so an enum is enough. The State pattern would be overkill here."*
+
+**Not used:** the State pattern (no state has its own behaviour), Singleton (it's hard to test), and Builder for `Order` (the constructor is small).
+
+### ACID (if asked)
+**Atomic:** `acceptOrder` picks the rider **first**. If nobody is free it throws before anything changes, so the order is never "ACCEPTED with no rider". **Consistent:** a busy rider has exactly one active order. **Isolated:** `synchronized`. **Durable:** not in memory; *"in production, a DB transaction."*
 
 ---
 
-## 4. Implementation (~10–15 min)
+## 4. Implementation (~10 min)
 
-**placeOrder:** cart → for each item, check it's available and copy name + price → total → save → clear the cart. *Edge cases:* empty cart; item sold out.
-**acceptOrder:** move to ACCEPTED → assign the nearest free rider. *Edge case:* nobody free → the order waits.
-**deliver / cancel:** move the status → free the rider → give waiting orders a chance. *Edge case:* an illegal move → error.
+**Write it in this order:** `OrderStatus` → `Order` + `OrderItem` → `DeliveryPartner` + the strategy → the service (`placeOrder` and `acceptOrder` are the crux).
 
 ```java
 public enum OrderStatus {
-    PLACED, ACCEPTED, READY, PICKED_UP, DELIVERED, CANCELLED;
+    PLACED, ACCEPTED, PICKED_UP, DELIVERED, CANCELLED;
 
     public boolean canMoveTo(OrderStatus next) {
         switch (this) {
             case PLACED:    return next == ACCEPTED || next == CANCELLED;
-            case ACCEPTED:  return next == READY || next == CANCELLED;
-            case READY:     return next == PICKED_UP || next == CANCELLED;
-            case PICKED_UP: return next == DELIVERED;                  // food on the road: no cancel
-            default:        return false;                              // DELIVERED, CANCELLED are final
+            case ACCEPTED:  return next == PICKED_UP || next == CANCELLED;
+            case PICKED_UP: return next == DELIVERED;          // food on the road: no cancel
+            default:        return false;                      // DELIVERED, CANCELLED are final
         }
     }
 }
 
 public class Order {
     private final String id, customerId, restaurantId;
+    private final Location deliveryLocation;
     private final List<OrderItem> items;
     private final long total;
     private OrderStatus status = OrderStatus.PLACED;
-    private String partnerId;                                          // null until assigned
+    private DeliveryPartner partner;                         // null until accepted
 
     public void moveTo(OrderStatus next) {
         if (!status.canMoveTo(next)) {
@@ -96,31 +142,26 @@ public class Order {
         }
         status = next;
     }
-
-    public boolean needsPartner() {
-        return partnerId == null && (status == OrderStatus.ACCEPTED || status == OrderStatus.READY);
-    }
-    // constructor, getters, setPartnerId
+    // constructor, getters, setPartner
 }
 
-public class Cart {
-    private String restaurantId;                                       // null while empty
-    private final Map<String, Integer> quantities = new LinkedHashMap<>();
-
-    public void add(String restaurantId, String itemId, int qty) {
-        if (qty <= 0) throw new IllegalArgumentException("Quantity must be > 0");
-        if (this.restaurantId != null && !this.restaurantId.equals(restaurantId)) {
-            throw new IllegalStateException("Cart has items from another restaurant. Clear it first.");
-        }
-        this.restaurantId = restaurantId;
-        quantities.merge(itemId, qty, Integer::sum);
-    }
-    // clear, isEmpty, getRestaurantId, getQuantities
+public class OrderItem {                                     // a COPY: the menu can change later
+    private final String itemId, name;
+    private final long unitPrice;
+    private final int quantity;
+    public long subtotal() { return unitPrice * quantity; }
+    // constructor, getters
 }
 
-// OrderItem { itemId, name, unitPrice, quantity; subtotal() = unitPrice × quantity }
-// MenuItem { id, name, price, available }   Restaurant { id, name, location, menu; getItem(id) }
-// DeliveryPartner { id, name, location, available }   Location { x, y; distanceTo(other) }
+public class DeliveryPartner {
+    private final String id, name;
+    private Location location;
+    private boolean available = true;
+    public void finishDelivery(Location dropPoint) { location = dropPoint; available = true; }
+    // constructor, getters, setAvailable
+}
+// Restaurant { id, name, location, Map<id, MenuItem> menu, getItem(id) throws if unknown }
+// MenuItem   { id, name, price, available }       Location { x, y, distanceTo }
 ```
 
 ```java
@@ -145,161 +186,233 @@ public class NearestPartnerStrategy implements PartnerAssignmentStrategy {
 public class FoodDeliveryService {
     private final Map<String, Restaurant> restaurants = new HashMap<>();
     private final Map<String, DeliveryPartner> partners = new HashMap<>();
-    private final Map<String, Cart> carts = new HashMap<>();
     private final Map<String, Order> orders = new HashMap<>();
     private final PartnerAssignmentStrategy assignmentStrategy;
     private int nextOrderNumber = 1;
 
-    // constructor sets the strategy; addRestaurant / addPartner put into the maps
+    // constructor sets the strategy; addRestaurant / addPartner put them in the maps
 
-    public synchronized void addToCart(String userId, String restaurantId, String itemId, int qty) {
-        MenuItem item = getRestaurant(restaurantId).getItem(itemId);
-        if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is unavailable");
-        carts.computeIfAbsent(userId, u -> new Cart()).add(restaurantId, itemId, qty);
-    }
-
-    public synchronized Order placeOrder(String userId, Location deliveryLocation) {
-        Cart cart = carts.get(userId);
-        if (cart == null || cart.isEmpty()) throw new IllegalStateException("Cart is empty");
-        Restaurant restaurant = getRestaurant(cart.getRestaurantId());
-
+    public synchronized Order placeOrder(String customerId, String restaurantId,
+                                         Map<String, Integer> items, Location deliveryLocation) {
+        if (items.isEmpty()) throw new IllegalArgumentException("Order has no items");
+        Restaurant restaurant = findRestaurant(restaurantId);
         List<OrderItem> lines = new ArrayList<>();
         long total = 0;
-        for (Map.Entry<String, Integer> e : cart.getQuantities().entrySet()) {
+        for (Map.Entry<String, Integer> e : items.entrySet()) {
             MenuItem item = restaurant.getItem(e.getKey());
-            if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is no longer available");
-            OrderItem line = new OrderItem(item.getId(), item.getName(), item.getPrice(), e.getValue());   // copy
+            if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is not available");
+            OrderItem line = new OrderItem(item.getId(), item.getName(), item.getPrice(), e.getValue());  // copy
             lines.add(line);
             total += line.subtotal();
         }
-        Order order = new Order("ORD-" + nextOrderNumber++, userId, restaurant.getId(), deliveryLocation, lines, total);
+        Order order = new Order("ORD-" + nextOrderNumber++, customerId, restaurantId, deliveryLocation, lines, total);
         orders.put(order.getId(), order);
-        cart.clear();
         return order;
     }
 
     public synchronized void acceptOrder(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.ACCEPTED);
-        assignPartner(order);
-    }
-
-    public synchronized void markReady(String orderId) { getOrder(orderId).moveTo(OrderStatus.READY); }
-
-    public synchronized void pickUp(String orderId) {
-        Order order = getOrder(orderId);
-        if (order.getPartnerId() == null) throw new IllegalStateException("No rider assigned to " + orderId);
-        order.moveTo(OrderStatus.PICKED_UP);
-    }
-
-    public synchronized void deliver(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.DELIVERED);
-        freePartner(order);
-        assignWaitingOrders();                        // the freed rider can take a waiting order
-    }
-
-    public synchronized void cancel(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.CANCELLED);          // throws once the food is picked up
-        freePartner(order);
-        assignWaitingOrders();
-    }
-
-    private void assignPartner(Order order) {
+        Order order = findOrder(orderId);
         List<DeliveryPartner> free = new ArrayList<>();
         for (DeliveryPartner p : partners.values()) {
             if (p.isAvailable()) free.add(p);
         }
-        DeliveryPartner partner = assignmentStrategy.choose(free, getRestaurant(order.getRestaurantId()).getLocation());
-        if (partner == null) return;                  // nobody free: the order waits
+        DeliveryPartner partner = assignmentStrategy.choose(free, findRestaurant(order.getRestaurantId()).getLocation());
+        if (partner == null) throw new IllegalStateException("No rider free for " + orderId);   // nothing changed
+
+        order.moveTo(OrderStatus.ACCEPTED);
         partner.setAvailable(false);
-        order.setPartnerId(partner.getId());
+        order.setPartner(partner);
     }
 
-    private void assignWaitingOrders() {
-        for (Order order : orders.values()) {
-            if (order.needsPartner()) assignPartner(order);
-        }
+    public synchronized void pickUp(String orderId) {
+        findOrder(orderId).moveTo(OrderStatus.PICKED_UP);
     }
 
-    private void freePartner(Order order) {
-        if (order.getPartnerId() != null) partners.get(order.getPartnerId()).setAvailable(true);
+    public synchronized void deliver(String orderId) {
+        Order order = findOrder(orderId);
+        order.moveTo(OrderStatus.DELIVERED);
+        order.getPartner().finishDelivery(order.getDeliveryLocation());   // free, at the customer's door
     }
-    // + getOrder / getRestaurant: throw NoSuchElementException if missing
+
+    public synchronized void cancel(String orderId) {
+        Order order = findOrder(orderId);
+        order.moveTo(OrderStatus.CANCELLED);                  // throws once picked up
+        if (order.getPartner() != null) order.getPartner().setAvailable(true);
+    }
+    // findOrder / findRestaurant: look up, or throw NoSuchElementException
 }
 ```
 
-**Verify out loud** (Ravi 1 km from the restaurant, Asha 8 km):
-```
-Alice: 2 × Biryani ₹320 + 1 × Raita ₹40 → placeOrder → ORD-1 total ₹680
-menu price changes to ₹999 → ORD-1 still ₹680 (prices were copied)
-deliver(ORD-1) now → PLACED → DELIVERED not allowed → error
-accept ORD-1 → nearest free = Ravi.   accept ORD-2 → Asha.   accept ORD-3 → nobody free → waits
-ORD-1: ready → picked up → delivered → Ravi free → waiting ORD-3 gets Ravi
-cancel ORD-2 → Asha free.   cancel ORD-3 after pickup → error
-```
+**Verify out loud:** walk through the run from section 0. For the race, say: *"Two restaurants accept at once, and Ravi is nearest to both. The first takes the lock, picks Ravi and marks him busy. The second then sees only Asha."*
 
 ---
 
 ## 5. Extensibility (~5 min)
 
-Say **which class changes and why**.
+Name **which class changes**, write the few new lines, and don't redesign the rest.
 
-| What if... | Change |
-|---|---|
-| Payment (UPI / card / cash) | A `PaymentMethod` Strategy; `placeOrder` charges the total before saving the order (order id as the idempotency key). |
-| Delivery fee, surge, coupons | A `PricingStrategy` for the total; surge and coupons wrap it (Decorator): `new Coupon(new Surge(new StandardPricing(), 20), 100)`. |
-| Notify the customer on every status change | Observer: an `OrderListener` called after each `moveTo`. |
-| The rider rejects the order | Free them, remember they declined, and run `assignPartner` again skipping them. |
-| Refund depends on how far the order got | Read the status before cancelling: PLACED → full, ACCEPTED → half, READY → none. |
-| Search restaurants / restaurant closed | `searchRestaurants(query)` over the names; an `open` flag checked in `placeOrder`. |
-| Many users, the lock is slow | First say *"each call holds it for microseconds; I'd measure."* Then: claim a rider atomically (`AtomicReference<String> currentOrderId`, `compareAndSet(null, orderId)`), lock per order instead of the whole service, and use concurrent maps. |
-| Thousands of riders | A geo index (grid cells) so the strategy only looks at riders near the restaurant. |
+**Quick revision:**
 
-<details>
-<summary>Code: many users without a global lock</summary>
+| # | Interviewer asks | One-line answer |
+|---|---|---|
+| 1 | "No rider free: don't fail, make it wait" | A FIFO queue of waiting orders; a rider who becomes free takes the oldest |
+| 2 | "Add a cart, one restaurant only" | `Cart` remembers its restaurant and refuses items from another |
+| 3 | "Restaurant marks the food READY" | One more status in the enum + `markReady()` |
+| 4 | "Delivery fee, coupons" | `PricingStrategy`; a coupon wraps it (Decorator) |
+| 5 | "Notify the customer at every step" | Observer: listeners hear each status change |
+| 6 | "The rider can reject" | Free them and offer the order to the next rider (skip the ones who said no) |
+| 7 | "Many orders, the lock is slow" | `tryReserve()` claims a rider atomically, retry if taken |
 
+---
+
+### 1. "No rider free: let the order wait"
+**Idea:** accept anyway and put the order in a **queue** (oldest first). When a rider is freed (by a delivery or a cancel), they take the oldest waiting order.
 ```java
-// DeliveryPartner: claim in one atomic step
-private final AtomicReference<String> currentOrderId = new AtomicReference<>();   // null = free
-public boolean tryAssign(String orderId) { return currentOrderId.compareAndSet(null, orderId); }
-public void release(String orderId)      { currentOrderId.compareAndSet(orderId, null); }
+private final Queue<Order> waiting = new LinkedList<>();
 
-// FoodDeliveryService: lock only the ORDER being assigned (one order can't get two riders),
-// and let the CAS decide which order gets a rider (one rider can't get two orders)
-private void tryAssignPartner(Order order) {
-    synchronized (order) {
-        if (!order.needsPartner()) return;
-        for (DeliveryPartner p : rankedFreePartners(order)) {      // best first
-            if (p.tryAssign(order.getId())) { order.setPartnerId(p.getId()); return; }
+public synchronized void acceptOrder(String orderId) {
+    Order order = findOrder(orderId);
+    order.moveTo(OrderStatus.ACCEPTED);
+    if (!tryAssign(order)) waiting.add(order);                  // nobody free: wait in line
+}
+
+private boolean tryAssign(Order order) {                        // the old accept logic, returning true/false
+    DeliveryPartner partner = assignmentStrategy.choose(freePartners(), restaurantLocation(order));
+    if (partner == null) return false;
+    partner.setAvailable(false);
+    order.setPartner(partner);
+    return true;
+}
+
+private void assignWaiting() {                                  // call at the end of deliver() and cancel()
+    while (!waiting.isEmpty() && tryAssign(waiting.peek())) waiting.poll();
+}
+// cancel(): if the order has no rider yet → waiting.remove(order)
+// pickUp(): if (order.getPartner() == null) throw "No rider yet"
+```
+**Check:** 1 rider, 3 orders → 2 wait · first delivery → the **oldest** waiting order gets the rider · a cancelled waiting order leaves the queue.
+
+---
+
+### 2. "Add a cart: items from one restaurant only"
+```java
+public class Cart {
+    private String restaurantId;                                 // null while empty
+    private final Map<String, Integer> items = new LinkedHashMap<>();
+
+    public void add(String restaurantId, String itemId, int qty) {
+        if (this.restaurantId != null && !this.restaurantId.equals(restaurantId)) {
+            throw new IllegalStateException("Cart has items from another restaurant. Clear it first.");
         }
+        this.restaurantId = restaurantId;
+        items.put(itemId, items.getOrDefault(itemId, 0) + qty);
     }
+    public void clear() { items.clear(); restaurantId = null; }
 }
+// service: Map<customerId, Cart> carts;  placeOrder(customerId) reads the cart, then calls cart.clear()
 ```
-</details>
+**Say:** *"`placeOrder` doesn't change. The cart just collects the items first."*
 
-<details>
-<summary>Code: coupons and surge on top of the price (Decorator)</summary>
+---
 
+### 3. "The restaurant marks the food READY"
 ```java
-public interface PricingStrategy { long price(List<OrderItem> items, double distanceKm); }
+// OrderStatus: PLACED, ACCEPTED, READY, PICKED_UP, DELIVERED, CANCELLED
+case ACCEPTED: return next == READY || next == CANCELLED;
+case READY:    return next == PICKED_UP || next == CANCELLED;
 
-public class SurgePricing implements PricingStrategy {          // rain / peak hours: +X%
-    private final PricingStrategy inner;
-    private final int surgePercent;
-    public SurgePricing(PricingStrategy inner, int surgePercent) { this.inner = inner; this.surgePercent = surgePercent; }
-    public long price(List<OrderItem> items, double km) { return inner.price(items, km) * (100 + surgePercent) / 100; }
+public synchronized void markReady(String orderId) { findOrder(orderId).moveTo(OrderStatus.READY); }
+```
+**Say:** *"Only the enum and one method change. Every other check already goes through `moveTo`."*
+
+---
+
+### 4. "Delivery fee and coupons"
+```java
+public interface PricingStrategy {
+    long price(long foodTotal, double distanceKm);
 }
 
-public class FlatCoupon implements PricingStrategy {            // "₹100 off", never below 0
+public class StandardPricing implements PricingStrategy {       // ₹20 + ₹5 per km
+    public long price(long foodTotal, double km) { return foodTotal + 20 + Math.round(km * 5); }
+}
+
+public class CouponDiscount implements PricingStrategy {        // wraps any pricing (Decorator)
     private final PricingStrategy inner;
-    private final long discount;
-    public FlatCoupon(PricingStrategy inner, long discount) { this.inner = inner; this.discount = discount; }
-    public long price(List<OrderItem> items, double km) { return Math.max(0, inner.price(items, km) - discount); }
+    private final long off;
+    public CouponDiscount(PricingStrategy inner, long off) { this.inner = inner; this.off = off; }
+    public long price(long foodTotal, double km) { return Math.max(0, inner.price(foodTotal, km) - off); }
+}
+// new CouponDiscount(new StandardPricing(), 100)
+```
+**Check:** food ₹680, 3 km → ₹715 · with ₹100 off → ₹615 · a huge coupon → ₹0, never negative.
+
+---
+
+### 5. "Notify the customer at every step"
+```java
+public interface OrderListener {
+    void statusChanged(Order order, OrderStatus newStatus);
+}
+
+// FoodDeliveryService
+private final List<OrderListener> listeners = new ArrayList<>();
+public synchronized void addListener(OrderListener l) { listeners.add(l); }
+
+// after every moveTo(...):
+for (OrderListener l : listeners) l.statusChanged(order, order.getStatus());
+
+// app.addListener(new PushNotifier());  app.addListener(new RestaurantDashboard());
+```
+**Say:** *"The service just announces the change. Push, SMS and the restaurant screen are listeners. Slow ones go on a queue."*
+
+---
+
+### 6. "The rider can reject the order"
+```java
+// Order: + Set<String> rejectedBy
+
+public synchronized void rejectOrder(String orderId) {
+    Order order = findOrder(orderId);
+    DeliveryPartner old = order.getPartner();
+    old.setAvailable(true);
+    order.addRejectedBy(old.getId());
+
+    List<DeliveryPartner> candidates = new ArrayList<>();
+    for (DeliveryPartner p : freePartners()) {
+        if (!order.wasRejectedBy(p.getId())) candidates.add(p);
+    }
+    DeliveryPartner next = assignmentStrategy.choose(candidates, restaurantLocation(order));
+    order.setPartner(next);
+    if (next == null) waiting.add(order);                       // everyone said no: wait (Extension 1)
+    else next.setAvailable(false);
 }
 ```
-</details>
+**Check:** P1 rejects → P2 gets it, P1 is free · P2 rejects too → the order waits.
+
+---
+
+### 7. "Many orders, the single lock is slow"
+**First say:** *"Each call holds the lock for microseconds. I'd measure first."*
+
+**Idea:** lock **one rider**, not the whole service. `tryReserve()` checks and claims in one step. If another order just took that rider, choose again.
+```java
+// DeliveryPartner
+public synchronized boolean tryReserve() {
+    if (!available) return false;
+    available = false;
+    return true;
+}
+
+// FoodDeliveryService.acceptOrder (no synchronized; maps become ConcurrentHashMap; a lock per order for moveTo)
+while (true) {
+    DeliveryPartner partner = assignmentStrategy.choose(freePartners(), restaurantLocation(order));
+    if (partner == null) throw new IllegalStateException("No rider free");
+    if (partner.tryReserve()) { order.setPartner(partner); break; }   // true for exactly one order
+    // someone else just took this rider: choose again
+}
+```
+**Check:** 20 orders, 5 riders at the same instant → exactly 5 claims, all different riders.
 
 ---
 

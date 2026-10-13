@@ -1,8 +1,8 @@
 # Session Handoff — LLD Interview Prep Deck
 
 > **UPDATE 2026-10-08 (newest):** the owner prefers a SHORT format, with a base small enough to write in 30–40 min.
-> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance** (fooddelivery has the short 5-phase layout but not yet
-> sections 0 or the new extension cards):
+> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance, fooddelivery** (fooddelivery simplified 2026-10-13: no cart,
+> no READY, no waiting queue in the base; those are extension cards):
 > - MD = **0 Plain words** (real-life picture, the 2–4 actions, real world → code table, only the 2–3 tricky
 >   points, one sample run) → **1 Requirements (~4)** → 2 Entities → 3 Class Design → 4 Implementation →
 >   **5 Extensibility** = a quick-revision table + one card per extension (Idea → visible code → Check → Say).

@@ -10,9 +10,9 @@ public class Order {
     private final String restaurantId;
     private final Location deliveryLocation;
     private final List<OrderItem> items;
-    private final long total;
+    private final long total;                              // rupees
     private OrderStatus status = OrderStatus.PLACED;
-    private String partnerId;                           // null until a rider is assigned
+    private DeliveryPartner partner;                       // null until the restaurant accepts
 
     public Order(String id, String customerId, String restaurantId, Location deliveryLocation,
                  List<OrderItem> items, long total) {
@@ -31,11 +31,6 @@ public class Order {
         status = next;
     }
 
-    // waiting for a rider: accepted or ready, and nobody assigned yet
-    public boolean needsPartner() {
-        return partnerId == null && (status == OrderStatus.ACCEPTED || status == OrderStatus.READY);
-    }
-
     public String          getId()               { return id; }
     public String          getCustomerId()       { return customerId; }
     public String          getRestaurantId()     { return restaurantId; }
@@ -43,6 +38,6 @@ public class Order {
     public List<OrderItem> getItems()            { return new ArrayList<>(items); }
     public long            getTotal()            { return total; }
     public OrderStatus     getStatus()           { return status; }
-    public String          getPartnerId()        { return partnerId; }
-    public void            setPartnerId(String partnerId) { this.partnerId = partnerId; }
+    public DeliveryPartner getPartner()          { return partner; }
+    public void            setPartner(DeliveryPartner partner) { this.partner = partner; }
 }

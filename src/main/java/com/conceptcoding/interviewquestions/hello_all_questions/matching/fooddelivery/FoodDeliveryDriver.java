@@ -8,8 +8,11 @@ import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddel
 import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model.Restaurant;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -18,110 +21,106 @@ import java.util.concurrent.TimeUnit;
 
 public class FoodDeliveryDriver {
 
+    static final Location HOME = new Location(2, 2);
+
     public static void main(String[] args) throws Exception {
         FoodDeliveryService app = new FoodDeliveryService(new NearestPartnerStrategy());
-
         Restaurant meghana = new Restaurant("R1", "Meghana Foods", new Location(0, 0));
-        MenuItem biryani = new MenuItem("I1", "Chicken Biryani", 320);
+        MenuItem biryani = new MenuItem("I1", "Biryani", 320);
+        MenuItem raita = new MenuItem("I2", "Raita", 40);
         meghana.addItem(biryani);
-        meghana.addItem(new MenuItem("I2", "Raita", 40));
-        Restaurant truffles = new Restaurant("R2", "Truffles", new Location(5, 5));
-        truffles.addItem(new MenuItem("I3", "Burger", 250));
+        meghana.addItem(raita);
         app.addRestaurant(meghana);
-        app.addRestaurant(truffles);
+        DeliveryPartner ravi = new DeliveryPartner("P1", "Ravi", new Location(1, 0));    // 1 km from the restaurant
+        DeliveryPartner asha = new DeliveryPartner("P2", "Asha", new Location(8, 0));    // 8 km
+        app.addPartner(ravi);
+        app.addPartner(asha);
 
-        DeliveryPartner near = new DeliveryPartner("P1", "Ravi (1 km)", new Location(1, 0));
-        DeliveryPartner far  = new DeliveryPartner("P2", "Asha (8 km)", new Location(8, 0));
-        app.addPartner(near);
-        app.addPartner(far);
+        System.out.println("=== Place order: prices are copied into the order ===");
+        Order o1 = app.placeOrder("alice", "R1", items("I1", 2, "I2", 1), HOME);
+        biryani.setPrice(999);                                   // the menu changes AFTER ordering
+        System.out.println("  " + o1.getId() + " " + o1.getItems() + " total ₹" + o1.getTotal() + " (expect ₹680)");
 
-        System.out.println("=== Cart: one restaurant only ===");
-        app.addToCart("alice", "R1", "I1", 2);
-        app.addToCart("alice", "R1", "I2", 1);
-        try { app.addToCart("alice", "R2", "I3", 1); }
-        catch (IllegalStateException e) { System.out.println("  Rejected: " + e.getMessage()); }
-
-        System.out.println("\n=== Place order: prices are copied into the order ===");
-        Order o1 = app.placeOrder("alice", new Location(2, 2));
-        biryani.setPrice(999);                                   // menu price changes AFTER ordering
-        System.out.println("  " + o1.getId() + " " + o1.getItems() + " total ₹" + o1.getTotal()
-                + "  (expect ₹680, not affected by new price)");
-
-        System.out.println("\n=== Illegal transition is rejected ===");
-        try { app.deliver(o1.getId()); }
-        catch (IllegalStateException e) { System.out.println("  Rejected: " + e.getMessage()); }
-
-        System.out.println("\n=== Accept → nearest free rider assigned ===");
+        System.out.println("\n=== Restaurant accepts → nearest free rider ===");
+        tryIt("deliver before accepting", () -> app.deliver(o1.getId()));
         app.acceptOrder(o1.getId());
-        System.out.println("  rider = " + o1.getPartnerId() + "  (expect P1, the nearest)");
+        System.out.println("  " + o1.getStatus() + ", rider " + o1.getPartner().getName() + " (expect ACCEPTED, Ravi)");
 
-        System.out.println("\n=== Second order while Ravi is busy → next nearest ===");
-        app.addToCart("bob", "R1", "I2", 3);
-        Order o2 = app.placeOrder("bob", new Location(1, 1));
+        System.out.println("\n=== Second order while Ravi is busy → Asha ===");
+        Order o2 = app.placeOrder("bob", "R1", items("I2", 3), HOME);
         app.acceptOrder(o2.getId());
-        System.out.println("  rider = " + o2.getPartnerId() + "  (expect P2)");
+        System.out.println("  rider " + o2.getPartner().getName() + " (expect Asha)");
 
-        System.out.println("\n=== Third order: no rider free → waits, assigned when one frees up ===");
-        app.addToCart("carol", "R2", "I3", 1);
-        Order o3 = app.placeOrder("carol", new Location(6, 6));
-        app.acceptOrder(o3.getId());
-        System.out.println("  rider now = " + o3.getPartnerId() + "  (expect null)");
-        app.markReady(o1.getId());
+        System.out.println("\n=== Third order, no rider free → stays PLACED ===");
+        Order o3 = app.placeOrder("carol", "R1", items("I2", 1), HOME);
+        tryIt("accept with no rider free", () -> app.acceptOrder(o3.getId()));
+        System.out.println("  " + o3.getStatus() + ", rider " + o3.getPartner() + " (expect PLACED, null)");
+
+        System.out.println("\n=== Pick up → deliver → rider free again, at the customer's door ===");
         app.pickUp(o1.getId());
+        tryIt("cancel after pickup", () -> app.cancel(o1.getId()));
         app.deliver(o1.getId());
-        System.out.println("  " + o1.getId() + " " + o1.getStatus() + "; " + o3.getId() + " rider = "
-                + o3.getPartnerId() + "  (expect P1, freed by the delivery)");
+        System.out.println("  " + o1.getStatus() + ", Ravi free? " + ravi.isAvailable() + ", at " + ravi.getLocation() + " (expect DELIVERED, true, (2.0,2.0))");
 
-        System.out.println("\n=== Cancel frees the rider; cancel after pickup is rejected ===");
+        System.out.println("\n=== Cancel before pickup frees the rider ===");
         app.cancel(o2.getId());
-        System.out.println("  " + o2.getId() + " " + o2.getStatus() + ", Asha free? " + far.isAvailable());
-        app.markReady(o3.getId());
-        app.pickUp(o3.getId());
-        try { app.cancel(o3.getId()); }
-        catch (IllegalStateException e) { System.out.println("  Rejected: " + e.getMessage()); }
+        System.out.println("  " + o2.getStatus() + ", Asha free? " + asha.isAvailable() + " (expect CANCELLED, true)");
+        app.acceptOrder(o3.getId());
+        System.out.println("  carol accepted, rider " + o3.getPartner().getName() + " (expect Ravi: 2.8 km away now, Asha 8 km)");
 
-        concurrentAssignment();
+        System.out.println("\n=== Rejections ===");
+        raita.setAvailable(false);
+        tryIt("order an unavailable item", () -> app.placeOrder("dan", "R1", items("I2", 1), HOME));
+        tryIt("empty order", () -> app.placeOrder("dan", "R1", items(), HOME));
+        tryIt("quantity 0", () -> app.placeOrder("dan", "R1", items("I1", 0), HOME));
+        tryIt("unknown item", () -> app.placeOrder("dan", "R1", items("I9", 1), HOME));
+        tryIt("accept twice", () -> app.acceptOrder(o3.getId()));
+
+        concurrentAccepts();
     }
 
-    // 20 orders accepted at the same instant, only 5 riders: exactly 5 orders get a rider
-    // and no rider is given two orders.
-    private static void concurrentAssignment() throws Exception {
-        System.out.println("\n=== Concurrency: 20 orders accepted at once, 5 riders ===");
+    // 20 restaurants accept at the same instant, 5 riders: exactly 5 orders get a rider, all different.
+    private static void concurrentAccepts() throws Exception {
+        System.out.println("\n=== Concurrency: 20 accepts, 5 riders ===");
         FoodDeliveryService app = new FoodDeliveryService(new NearestPartnerStrategy());
-        Restaurant r = new Restaurant("R1", "Cloud Kitchen", new Location(0, 0));
-        r.addItem(new MenuItem("I1", "Thali", 150));
+        Restaurant r = new Restaurant("R1", "Meghana Foods", new Location(0, 0));
+        r.addItem(new MenuItem("I1", "Biryani", 320));
         app.addRestaurant(r);
-        for (int i = 1; i <= 5; i++) app.addPartner(new DeliveryPartner("P" + i, "Rider " + i, new Location(i, 0)));
-
+        for (int i = 0; i < 5; i++) app.addPartner(new DeliveryPartner("P" + i, "Rider " + i, new Location(i, 0)));
         List<Order> orders = new ArrayList<>();
-        for (int i = 0; i < 20; i++) {
-            app.addToCart("user" + i, "R1", "I1", 1);
-            orders.add(app.placeOrder("user" + i, new Location(1, 1)));
-        }
+        for (int i = 0; i < 20; i++) orders.add(app.placeOrder("u" + i, "R1", items("I1", 1), HOME));
 
+        List<String> riders = Collections.synchronizedList(new ArrayList<>());
         ExecutorService pool = Executors.newFixedThreadPool(20);
-        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch go = new CountDownLatch(1);
         for (Order o : orders) {
             pool.submit(() -> {
-                start.await();
-                app.acceptOrder(o.getId());
+                go.await();
+                try { app.acceptOrder(o.getId()); riders.add(o.getPartner().getId()); }
+                catch (IllegalStateException e) { /* no rider free */ }
                 return null;
             });
         }
-        start.countDown();
+        go.countDown();
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.SECONDS);
+        Set<String> distinct = new HashSet<>(riders);
+        System.out.println("  assigned = " + riders.size() + " (expect 5), distinct riders = " + distinct.size() + " (expect 5)");
+    }
 
-        int assigned = 0;
-        Set<String> ridersUsed = new HashSet<>();
-        for (Order o : orders) {
-            if (o.getPartnerId() != null) {
-                assigned++;
-                ridersUsed.add(o.getPartnerId());
-            }
+    // items("I1", 2, "I2", 1) → {I1=2, I2=1}, in that order
+    private static Map<String, Integer> items(Object... pairs) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) m.put((String) pairs[i], (Integer) pairs[i + 1]);
+        return m;
+    }
+
+    private static void tryIt(String label, Runnable action) {
+        try {
+            action.run();
+            System.out.println("  " + label + ": ALLOWED ✗");
+        } catch (RuntimeException e) {
+            System.out.println("  " + label + ": rejected → " + e.getMessage());
         }
-        System.out.println("  orders with a rider = " + assigned + "  (expect 5)");
-        System.out.println("  distinct riders     = " + ridersUsed.size() + "  (expect 5)");
-        System.out.println(assigned == 5 && ridersUsed.size() == 5 ? "  no rider double-assigned ✓" : "  RACE ✗");
     }
 }

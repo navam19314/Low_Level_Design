@@ -2,7 +2,7 @@
 
 Every problem, grouped by **what kind of problem it is**. Problems in the same folder share a skeleton: learn one well, and the others are variations.
 
-**Start here:** [Java + Patterns refresher](00_JAVA_AND_PATTERNS_REFRESHER.md) → [Foundations](00_AMAZON_LLD_FOUNDATIONS.md) (how to think about *any* LLD problem) → the problems below.
+**Start here:** [Java + Patterns refresher](00_JAVA_AND_PATTERNS_REFRESHER.md) → [Patterns in short pseudo code](00_PATTERNS_PSEUDOCODE.md) (State, Observer) → [Foundations](00_AMAZON_LLD_FOUNDATIONS.md) (how to think about *any* LLD problem) → the problems below.
 
 **Tags:** ★ reported at Amazon in 2026 · ☆ reported at Amazon in 2025 · **E** on your Ethos list
 
@@ -25,7 +25,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 | Problem | The crux | Asked |
 |---|---|---|
 | [Cab Booking / Rider Matching](matching/cabbooking/INTERVIEW_WALKTHROUGH.md) | nearest-driver strategy, trip state machine (pricing + surge in extensions) | ★ |
-| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | order state machine, one-restaurant cart, price snapshot, waiting orders | **E** (reported at Ethos) |
+| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | order status flow, price copied into the order, nearest rider (cart, waiting queue in extensions) | **E** (reported at Ethos) |
 
 ## state_machines/: "what you can do depends on the current state"
 | Problem | The crux | Asked |

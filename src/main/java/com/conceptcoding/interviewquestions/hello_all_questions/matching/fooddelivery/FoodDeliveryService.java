@@ -1,7 +1,6 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.assignment.PartnerAssignmentStrategy;
-import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model.Cart;
 import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model.DeliveryPartner;
 import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model.Location;
 import com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model.MenuItem;
@@ -16,15 +15,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-// The service every app calls: customer (cart, order, cancel), restaurant (accept, ready),
-// rider (pick up, deliver).
+// The service every app calls: customer (order, cancel), restaurant (accept), rider (pick up, deliver).
 // Thread safety: every public method is synchronized, one lock for the whole service.
 // Simple and correct: one rider never gets two orders. Finer-grained locking is an extension.
 public class FoodDeliveryService {
 
     private final Map<String, Restaurant> restaurants = new HashMap<>();
     private final Map<String, DeliveryPartner> partners = new HashMap<>();
-    private final Map<String, Cart> carts = new HashMap<>();          // userId → cart
     private final Map<String, Order> orders = new HashMap<>();
     private final PartnerAssignmentStrategy assignmentStrategy;
     private int nextOrderNumber = 1;
@@ -33,105 +30,74 @@ public class FoodDeliveryService {
         this.assignmentStrategy = assignmentStrategy;
     }
 
-    public synchronized void addRestaurant(Restaurant r)    { restaurants.put(r.getId(), r); }
-    public synchronized void addPartner(DeliveryPartner p)  { partners.put(p.getId(), p); }
+    public synchronized void addRestaurant(Restaurant r)   { restaurants.put(r.getId(), r); }
+    public synchronized void addPartner(DeliveryPartner p) { partners.put(p.getId(), p); }
 
-    // ---------- customer ----------
-
-    public synchronized void addToCart(String userId, String restaurantId, String itemId, int qty) {
-        MenuItem item = getRestaurant(restaurantId).getItem(itemId);
-        if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is unavailable");
-        carts.computeIfAbsent(userId, u -> new Cart()).add(restaurantId, itemId, qty);
-    }
-
-    // copies each item's name and price into the order, so later menu changes don't affect it
-    public synchronized Order placeOrder(String userId, Location deliveryLocation) {
-        Cart cart = carts.get(userId);
-        if (cart == null || cart.isEmpty()) throw new IllegalStateException("Cart is empty");
-        Restaurant restaurant = getRestaurant(cart.getRestaurantId());
+    // items: itemId → quantity, all from ONE restaurant.
+    // The name and price are COPIED into the order, so a later menu change doesn't change the bill.
+    public synchronized Order placeOrder(String customerId, String restaurantId,
+                                         Map<String, Integer> items, Location deliveryLocation) {
+        if (items.isEmpty()) throw new IllegalArgumentException("Order has no items");
+        Restaurant restaurant = findRestaurant(restaurantId);
 
         List<OrderItem> lines = new ArrayList<>();
         long total = 0;
-        for (Map.Entry<String, Integer> e : cart.getQuantities().entrySet()) {
+        for (Map.Entry<String, Integer> e : items.entrySet()) {
             MenuItem item = restaurant.getItem(e.getKey());
-            if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is no longer available");
+            if (!item.isAvailable()) throw new IllegalStateException(item.getName() + " is not available");
+            if (e.getValue() <= 0) throw new IllegalArgumentException("Bad quantity for " + item.getName());
             OrderItem line = new OrderItem(item.getId(), item.getName(), item.getPrice(), e.getValue());
             lines.add(line);
             total += line.subtotal();
         }
-        Order order = new Order("ORD-" + nextOrderNumber++, userId, restaurant.getId(), deliveryLocation, lines, total);
+        Order order = new Order("ORD-" + nextOrderNumber++, customerId, restaurantId, deliveryLocation, lines, total);
         orders.put(order.getId(), order);
-        cart.clear();
         return order;
     }
 
-    public synchronized void cancel(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.CANCELLED);          // throws once the food is picked up
-        freePartner(order);
-        assignWaitingOrders();
-    }
-
-    // ---------- restaurant ----------
-
-    // accepting is when we look for a rider, so they arrive around when the food is ready
+    // The restaurant accepts → we find the nearest free rider right away.
+    // The rider is chosen FIRST: if nobody is free, the order stays PLACED (nothing changed).
     public synchronized void acceptOrder(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.ACCEPTED);
-        assignPartner(order);
-    }
-
-    public synchronized void markReady(String orderId) {
-        getOrder(orderId).moveTo(OrderStatus.READY);
-    }
-
-    // ---------- rider ----------
-
-    public synchronized void pickUp(String orderId) {
-        Order order = getOrder(orderId);
-        if (order.getPartnerId() == null) throw new IllegalStateException("No rider assigned to " + orderId);
-        order.moveTo(OrderStatus.PICKED_UP);
-    }
-
-    public synchronized void deliver(String orderId) {
-        Order order = getOrder(orderId);
-        order.moveTo(OrderStatus.DELIVERED);
-        freePartner(order);
-        assignWaitingOrders();                        // the freed rider can take a waiting order
-    }
-
-    // ---------- rider assignment ----------
-
-    private void assignPartner(Order order) {
+        Order order = findOrder(orderId);
         List<DeliveryPartner> free = new ArrayList<>();
         for (DeliveryPartner p : partners.values()) {
             if (p.isAvailable()) free.add(p);
         }
-        DeliveryPartner partner = assignmentStrategy.choose(free, getRestaurant(order.getRestaurantId()).getLocation());
-        if (partner == null) return;                  // nobody free: the order waits (see assignWaitingOrders)
+        DeliveryPartner partner = assignmentStrategy.choose(free, findRestaurant(order.getRestaurantId()).getLocation());
+        if (partner == null) throw new IllegalStateException("No rider free for " + orderId);
+
+        order.moveTo(OrderStatus.ACCEPTED);                    // throws if not PLACED
         partner.setAvailable(false);
-        order.setPartnerId(partner.getId());
+        order.setPartner(partner);
     }
 
-    private void assignWaitingOrders() {
-        for (Order order : orders.values()) {
-            if (order.needsPartner()) assignPartner(order);
-        }
+    public synchronized void pickUp(String orderId) {
+        findOrder(orderId).moveTo(OrderStatus.PICKED_UP);
     }
 
-    private void freePartner(Order order) {
-        if (order.getPartnerId() != null) partners.get(order.getPartnerId()).setAvailable(true);
+    public synchronized void deliver(String orderId) {
+        Order order = findOrder(orderId);
+        order.moveTo(OrderStatus.DELIVERED);
+        order.getPartner().finishDelivery(order.getDeliveryLocation());
     }
 
-    // ---------- lookups ----------
+    public synchronized void cancel(String orderId) {
+        Order order = findOrder(orderId);
+        order.moveTo(OrderStatus.CANCELLED);                   // throws once the food is picked up
+        if (order.getPartner() != null) order.getPartner().setAvailable(true);
+    }
 
     public synchronized Order getOrder(String orderId) {
+        return findOrder(orderId);
+    }
+
+    private Order findOrder(String orderId) {
         Order order = orders.get(orderId);
         if (order == null) throw new NoSuchElementException("Order not found: " + orderId);
         return order;
     }
 
-    private Restaurant getRestaurant(String restaurantId) {
+    private Restaurant findRestaurant(String restaurantId) {
         Restaurant r = restaurants.get(restaurantId);
         if (r == null) throw new NoSuchElementException("Restaurant not found: " + restaurantId);
         return r;
