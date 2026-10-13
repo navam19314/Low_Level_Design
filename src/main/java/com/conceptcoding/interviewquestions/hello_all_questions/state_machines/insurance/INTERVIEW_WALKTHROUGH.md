@@ -1,737 +1,367 @@
-# Insurance Policy Application Flow
+# Insurance Application (term life, Ethos-style)
 
-> **Why this one:** it's Ethos's core product (online term-life insurance). Expect the interviewer to know the domain well and to push on the state flow and the rules.
-> **The brief:** applicant, multi-step questionnaire, eligibility rules, quote generation, policy issuance. **Strategy** for underwriting rules, **State** for application status: `DRAFT → SUBMITTED → UNDERWRITING → APPROVED / REJECTED → ISSUED`.
->
-> **The crux (what's really being tested):**
-> 1. **State pattern done properly:** each state allows only its own actions, and an illegal action is impossible to forget to check.
-> 2. **Rules as pluggable strategies:** a new eligibility rule is a new class, with no edits to existing code.
-> 3. **Questions as data:** the questionnaire can change without changing `Application`.
->
-> **Families:** F3 State machine + F5 Swappable policy. See [foundations](../../00_AMAZON_LLD_FOUNDATIONS.md).
+> 30–40 min round. **Ethos's core product**: expect questions on the status flow and the rules. Phases: **Requirements (5) → Entities (3) → Class Design (10–15) → Implementation (10) → Extensibility (5)**.
 
 ---
 
-## 1. Plain-language picture
+## 0. The problem in plain words (read first, don't say it in the interview)
 
-### What actually happens when you buy term insurance online
+**Picture buying term insurance online.** You fill in your details (age, smoker?, how much cover you want, your income) and press Submit. The insurer runs its checks: too old? Cover too high for your income? You're either **approved** with a yearly price (the premium) or **rejected** with the reasons. If approved, your **policy is issued**.
+
+**The whole system is 3 actions:**
 ```
-1. You start an application                       → DRAFT
-2. You fill a form over several screens:
-   Personal (age, income) → Coverage (₹1 crore, 30 yrs) → Health (height, weight, smoker)
-3. You press Submit; answers are frozen            → SUBMITTED
-4. The insurer checks your risk ("underwriting")   → UNDERWRITING
-5a. OK: they offer a price (a quote)               → APPROVED
-5b. Not OK: refused, with reasons                  → REJECTED
-6. You accept the quote and the policy is created  → ISSUED
+Apply   →  apply(details)    → a DRAFT application
+Submit  →  submit(app)       → run ALL the rules → APPROVED + premium, or REJECTED + reasons
+Issue   →  issuePolicy(app)  → only if APPROVED, and only once
 ```
 
-### The application is a file moving between desks
-Think of an insurance office. Your paper file moves from desk to desk:
-- At the **draft desk** you may write on the form. You can't get a policy here.
-- At the **submitted desk** nobody writes on it; it waits for an underwriter.
-- At the **underwriting desk** an underwriter decides: approve with a price, or reject.
-- At the **approved desk** the clerk can print your policy. Only here.
-
-Each desk knows **only what it is allowed to do**. If you ask the draft desk for a policy, it says "not here". That's the **State pattern**: one class per desk, and each class implements only its own actions. Everything else is refused by default.
-
-### Underwriting is a panel of checkers
-Each checker looks at one thing and gives a verdict:
-```
-Age checker      : 18–65?                     → OK / DECLINE
-Income checker   : cover ≤ 20 × income?       → OK / DECLINE
-BMI checker      : BMI ≤ 35? 30–35 costs more → OK / +25% / DECLINE
-Smoker checker   : smoker costs more          → OK / +50%
-```
-**All** checkers run, so a rejection lists every reason. If nobody declines, the "+X%" loadings are added up and applied to the base price. A new rule from the actuaries is just a new checker on the panel: that's **Strategy**.
-
-### The price
-```
-base premium  = cover ÷ 1,000 × rate for your age band     ₹1 crore, age 28 → ₹10,000 / year
-final premium = base × (100 + total loading %) ÷ 100        smoker + BMI 31 → +75% → ₹17,500 / year
-```
-
----
-
-## 2. From story to design
-
-| # | Decision | Rejected | Why |
-|---|---|---|---|
-| D1 | **State pattern**: `ApplicationState` interface, one class per state | an enum + `if (status == ...)` in every method | Here each state **does different work** (draft validates answers, approved creates a policy). With ifs, every new action needs a check in every method; one missed check = a policy issued from DRAFT. |
-| D2 | Interface methods are `default` and **throw**; each state overrides only its legal actions | every state implementing every method | Final states (REJECTED, ISSUED) need zero code, and "not allowed" can't be forgotten. |
-| D3 | `Application` (the *context*) just delegates: `submit() { state.submit(this); }` | the service deciding what's legal | Rules about *when* live in one place: the state classes. |
-| D4 | One `FinalState(status)` class for REJECTED and ISSUED | two identical empty classes | Both allow nothing. |
-| D5 | Each underwriting rule is a **Strategy** (`UnderwritingRule`) | one big `evaluate()` method full of ifs | New rule = new class. Each rule is testable on its own. |
-| D6 | A rule returns **accept / load X% / decline**, and the `Underwriter` runs **all** rules | stop at the first decline | The applicant (and regulators) get every reason at once. |
-| D7 | Questions are **data** (`Questionnaire` → steps → `Question{id, type}`); answers are `Map<questionId, String>` | fields like `age`, `smoker` on `Application` | Product teams add questions all the time. Rules read answers by id (`getNumber("age")`). |
-| D8 | `QuestionType.isValid()` validates answers | validation in the service | Each type knows its own rule (NUMBER parses, YES_NO is yes/no). |
-| D9 | Money as `long` rupees; rate in **paise** per ₹1,000 | `double` | No rounding errors in prices. |
-| D10 | `Application` methods are `synchronized` | no locking | A double-clicked "Issue policy" button must not issue two policies. |
-| D11 | Out of base: manual review (REFERRED), quote expiry, conditional questions, payment, audit | building all | Follow-ups (§5). |
-
-### Class shape
-```
-InsuranceService                       ← the service the web app calls
-  startApplication · answer · nextStep · submit · underwrite · issuePolicy
-
-Application                            ← State-pattern CONTEXT
-  id, applicantName, Questionnaire, Map<questionId, answer>
-  ApplicationState state, Quote, rejectionReasons, Policy
-  answer() submit() startUnderwriting() recordDecision() issue()  → all delegate to state
-
-«interface» ApplicationState           ← every action throws by default
-  ├── DraftState         answer(), submit()
-  ├── SubmittedState     startUnderwriting()
-  ├── UnderwritingState  recordDecision()  → APPROVED or REJECTED
-  ├── ApprovedState      issue()           → ISSUED
-  └── FinalState         (nothing)         REJECTED, ISSUED
-
-«interface» UnderwritingRule → RuleResult{accept | load % | decline}
-  ├── AgeRule  ├── CoverageToIncomeRule  ├── BmiRule  └── SmokerRule
-Underwriter (runs all rules) + PremiumCalculator → UnderwritingDecision{approve(Quote) | reject(reasons)}
-
-Questionnaire → QuestionnaireStep → Question{id, text, QuestionType}
-Quote { coverage, basePremium, loading %, annualPremium }     Policy { number, holder, cover, premium }
-```
-
----
-
-## 3. Patterns that earn their place
-
-| Pattern | In the base? | Problem it solves | Without it |
-|---|---|---|---|
-| **State** (`ApplicationState`) | **Yes** | each status allows different actions and does different work | `if (status == DRAFT) ... else if ...` repeated in 5 methods; adding a status edits all of them |
-| **Strategy** (`UnderwritingRule`) | **Yes** | many independent eligibility/risk rules that change often | one giant method; every rule change risks breaking the others |
-| **Factory** (products) | No | term life vs health: different questionnaire + rules per product | Q8 |
-| **Observer** (status events) | No | email the applicant, update CRM on each status change | Q12 |
-
-**Why State here but an enum in Food Delivery?** Say this; interviewers love the contrast.
-> *"In food delivery each status only limits the next move. That's bookkeeping, so an enum with `canMoveTo` is enough. Here each state does different **work**: draft validates answers, underwriting records a decision, approved builds a policy. So each state gets its own class."*
-
-**Tempting but wrong here:**
-- **Chain of Responsibility for rules:** in a chain, a handler can stop the request. We want **every** rule to run and all reasons collected. That's a list of strategies.
-- **Builder for `Application`:** answers arrive one at a time over several screens. That's the multi-step flow, not object construction.
-- **Singleton service:** create once and inject.
-
----
-
-## 4. The 45-minute run
-
-### Clarify (min 0–5)
-> **You:** Flow: the applicant fills a multi-step form, submits, underwriting runs rules, then it's either approved with a quote or rejected; on acceptance a policy is issued. Correct?
-> **Interviewer:** Yes.
-> **You:** Can the applicant save and come back between steps, and edit answers before submitting?
-> **Interviewer:** Yes. After submit, answers are locked.
-> **You:** Do rules only accept or decline, or can they also raise the price?
-> **Interviewer:** Both: some rules decline, some add a loading.
-> **You:** On rejection, do we show all the reasons or just the first?
-> **Interviewer:** All.
-> **You:** Is underwriting automatic, or can a human review it?
-> **Interviewer:** Automatic for now.
-> **You:** Payment and quote expiry are out of scope?
-> **Interviewer:** For now.
-
-```
-In scope:  multi-step questionnaire (validate answers, find next incomplete step)
-           submit (all answered) → underwrite (all rules; loadings or decline) → quote
-           issue policy from an approved quote · illegal actions refused · thread-safe
-Out:       manual review, quote expiry, conditional questions, payment, multiple products
-```
-
-### Timeline
-| Min | Do |
+**Real world → code**
+| In the real world | In the code |
 |---|---|
-| 5–10 | Class shape. Say: *"State pattern for status, because each state does different work. Strategy for rules."* |
-| 10–20 | Code step 1: **`ApplicationState`** + the 5 state classes. This is what they asked to see. |
-| 20–25 | Code step 2: `Application` (delegation + answers map). |
-| 25–33 | Code step 3: `UnderwritingRule`, `RuleResult`, 2 rules (`AgeRule`, `SmokerRule`), `Underwriter`, `PremiumCalculator`. Say *"BMI and income rules follow the same shape."* |
-| 33–36 | Code step 4: `InsuranceService` + the thin questionnaire classes. |
-| 36–40 | Dry run: one approval with loadings, plus an illegal action. |
-| 40–45 | Follow-ups. |
+| Your form | `Application`: your details + status + premium or reasons |
+| Draft → Approved / Rejected → Issued | `ApplicationStatus` with `canMoveTo` |
+| The insurer's checks ("max age 60") | `UnderwritingRule`: one class per rule |
+| The final contract | `Policy` |
 
-### The code you write, in this order
+**Only 2 things are tricky:**
+1. **What's allowed depends on the status.** You can't issue a rejected application, and you can't issue twice. Every change goes through `moveTo`, which checks `canMoveTo`.
+2. **The rules keep changing,** so each rule is its own class in a list (Strategy). Run **all** of them, so a rejected person hears every reason at once.
 
-**Step 1: the State pattern** ([application/](application/))
+**Picture this run before you start coding** (rules: age 18–60, cover ≤ 20 × income; premium: ₹1 per ₹1,000 of cover, smokers pay double):
+```
+Asha  28, ₹1 crore cover, ₹10 lakh income → APPROVED ₹10,000/yr → issue → POL-APP-1 → issue again: refused
+Meera smoker, ₹1 crore                    → APPROVED ₹20,000/yr
+Ravi  65, ₹5 crore, ₹10 lakh income        → REJECTED [age outside 18-60, cover > 20x income]
+50 clicks on "Issue" at once              → exactly 1 policy
+```
+
+---
+
+## 1. Requirements (~5 min)
+
+**Ask:** which details? Which rules? How is the price calculated? Can it be issued twice? Double clicks?
+
+```
+1. apply(name, age, smoker, coverage, income) → a DRAFT application
+2. submit → run every rule → APPROVED with a yearly premium, or REJECTED with all the reasons
+3. issuePolicy → only when APPROVED, only once
+4. Safe with double clicks (no two policies)
+
+Out of scope: a multi-step form, price loadings, manual review, payment, emails
+```
+If the brief says **"use the State pattern"**, write Extension 1 instead of the enum.
+
+---
+
+## 2. Entities & Relationships (~3 min)
+
+```
+InsuranceService
+   ├── Application (many)    details, status, premium / reasons
+   ├── UnderwritingRule (list)
+   └── creates Policy
+```
+- **Underwriting runs inside `submit`,** so the statuses are just DRAFT → APPROVED / REJECTED → ISSUED.
+- **No Applicant or Quote class:** the details and the premium live on `Application`.
+
+---
+
+## 3. Class Design (~10 min)
+
+```
+InsuranceService    apply(...) → Application · submit(id) → status · issuePolicy(id) → Policy
+
+Application         id, name, age, smoker, coverage, annualIncome, status, annualPremium, rejectionReasons    moveTo(next)
+ApplicationStatus   DRAFT, APPROVED, REJECTED, ISSUED      canMoveTo(next)
+Policy              policyNumber, applicationId, annualPremium
+
+UnderwritingRule    check(app) → null (OK) or the reason     ← AgeRule, CoverageToIncomeRule
+```
+- **Thread safety:** every service method is `synchronized`.
+
+### Design patterns: the problem → the fix (how to say it)
+**Strategy for the rules.**
+*Problem:* the actuaries add rules every month. *Without it:* one long `submit()` full of `if`s, edited every time. *With it:* each rule is a small class, and `submit` loops over the list.
+**Say:** *"A new rule is a new class added to the list. `submit` never changes."*
+
+**Enum + `canMoveTo` for the status.**
+*Problem:* what's allowed depends on the status. *Without it:* `if (status == ...)` checks scattered everywhere, and one forgotten check means a rejected person gets a policy. *With it:* one list of legal moves, and every change goes through `moveTo`.
+**Say:** *"While states only limit the next move, an enum is enough. If each state gets its own behaviour, I'd use the State pattern."*
+
+**Not used:** Chain of Responsibility (it stops at the first match, but we want **all** the reasons) and Singleton (it's hard to test).
+
+### ACID (if asked)
+**Atomic:** the rules run *before* the status changes, so it's approved or rejected in one step. **Consistent:** APPROVED always has a premium, and a policy is issued at most once. **Isolated:** `synchronized`. **Durable:** not in memory; *"in production, a DB transaction."*
+
+---
+
+## 4. Implementation (~10 min)
+
+**Write it in this order:** `ApplicationStatus` → `Application` → the rule interface and one rule → `InsuranceService`.
+
 ```java
 public enum ApplicationStatus {
-    DRAFT, SUBMITTED, UNDERWRITING, APPROVED, REJECTED, ISSUED
-}
+    DRAFT, APPROVED, REJECTED, ISSUED;
 
-// Every action is refused by default; each state overrides ONLY what's legal in it.
-public interface ApplicationState {
-
-    ApplicationStatus status();
-
-    default void answer(Application app, String questionId, String value) { throw notAllowed("answer questions"); }
-    default void submit(Application app)                                  { throw notAllowed("submit"); }
-    default void startUnderwriting(Application app)                       { throw notAllowed("start underwriting"); }
-    default void recordDecision(Application app, UnderwritingDecision d)  { throw notAllowed("record a decision"); }
-    default Policy issue(Application app)                                 { throw notAllowed("issue a policy"); }
-
-    private IllegalStateException notAllowed(String action) {            // Java 9+: private interface method
-        return new IllegalStateException("Cannot " + action + " when the application is " + status());
-    }
-}
-
-public class DraftState implements ApplicationState {
-    public ApplicationStatus status() { return ApplicationStatus.DRAFT; }
-
-    @Override
-    public void answer(Application app, String questionId, String value) {
-        Question q = app.getQuestionnaire().getQuestion(questionId);       // throws if unknown
-        if (!q.getType().isValid(value)) {
-            throw new IllegalArgumentException("Invalid answer for '" + q.getText() + "': " + value);
-        }
-        app.putAnswer(questionId, value.trim());
-    }
-
-    @Override
-    public void submit(Application app) {
-        List<String> missing = app.getMissingQuestionIds();
-        if (!missing.isEmpty()) {
-            throw new IllegalStateException("Cannot submit, unanswered questions: " + missing);
-        }
-        app.setState(new SubmittedState());
-    }
-}
-
-public class SubmittedState implements ApplicationState {
-    public ApplicationStatus status() { return ApplicationStatus.SUBMITTED; }
-
-    @Override
-    public void startUnderwriting(Application app) { app.setState(new UnderwritingState()); }
-}
-
-public class UnderwritingState implements ApplicationState {
-    public ApplicationStatus status() { return ApplicationStatus.UNDERWRITING; }
-
-    @Override
-    public void recordDecision(Application app, UnderwritingDecision decision) {
-        if (decision.isApproved()) {
-            app.setQuote(decision.getQuote());
-            app.setState(new ApprovedState());
-        } else {
-            app.setRejectionReasons(decision.getRejectionReasons());
-            app.setState(new FinalState(ApplicationStatus.REJECTED));
+    public boolean canMoveTo(ApplicationStatus next) {
+        switch (this) {
+            case DRAFT:    return next == APPROVED || next == REJECTED;
+            case APPROVED: return next == ISSUED;
+            default:       return false;                 // REJECTED, ISSUED are final
         }
     }
 }
 
-public class ApprovedState implements ApplicationState {
-    public ApplicationStatus status() { return ApplicationStatus.APPROVED; }
-
-    @Override
-    public Policy issue(Application app) {
-        Quote quote = app.getQuote();
-        Policy policy = new Policy("POL-" + app.getId(), app.getId(), app.getApplicantName(),
-                                   quote.getCoverage(), quote.getAnnualPremium(), Instant.now());
-        app.setPolicy(policy);
-        app.setState(new FinalState(ApplicationStatus.ISSUED));
-        return policy;
-    }
-}
-
-// REJECTED and ISSUED: overrides nothing, so every action throws
-public class FinalState implements ApplicationState {
-    private final ApplicationStatus status;
-    public FinalState(ApplicationStatus status) { this.status = status; }
-    public ApplicationStatus status() { return status; }
-}
-```
-**Shape to remember:** interface with throwing defaults → each state overrides its 1–2 legal actions → the action calls `app.setState(next)`.
-
-**Step 2: the context** ([application/Application.java](application/Application.java))
-```java
 public class Application {
-
-    private final String id;
-    private final String applicantName;
-    private final Questionnaire questionnaire;
-    private final Map<String, String> answers = new LinkedHashMap<>();   // questionId → answer
-    private ApplicationState state = new DraftState();
-    private Quote quote;
+    private final String id, name;
+    private final int age;
+    private final boolean smoker;
+    private final long coverage, annualIncome;
+    private ApplicationStatus status = ApplicationStatus.DRAFT;
+    private long annualPremium;
     private List<String> rejectionReasons = new ArrayList<>();
-    private Policy policy;
 
-    public Application(String id, String applicantName, Questionnaire questionnaire) {
-        this.id = id;
-        this.applicantName = applicantName;
-        this.questionnaire = questionnaire;
-    }
-
-    // actions just delegate; synchronized so a double click can't issue twice
-    public synchronized void answer(String questionId, String value) { state.answer(this, questionId, value); }
-    public synchronized void submit()                                { state.submit(this); }
-    public synchronized void startUnderwriting()                     { state.startUnderwriting(this); }
-    public synchronized void recordDecision(UnderwritingDecision d)  { state.recordDecision(this, d); }
-    public synchronized Policy issue()                               { return state.issue(this); }
-    public synchronized ApplicationStatus getStatus()                { return state.status(); }
-
-    // multi-step form: first step with an unanswered question, or null when complete
-    public synchronized QuestionnaireStep getNextIncompleteStep() {
-        for (QuestionnaireStep step : questionnaire.getSteps()) {
-            for (Question q : step.getQuestions()) {
-                if (!answers.containsKey(q.getId())) return step;
-            }
+    public void moveTo(ApplicationStatus next) {
+        if (!status.canMoveTo(next)) {
+            throw new IllegalStateException("Application " + id + ": cannot go from " + status + " to " + next);
         }
-        return null;
+        status = next;
     }
-
-    public synchronized List<String> getMissingQuestionIds() {
-        List<String> missing = new ArrayList<>();
-        for (Question q : questionnaire.getAllQuestions()) {
-            if (!answers.containsKey(q.getId())) missing.add(q.getId());
-        }
-        return missing;
-    }
-
-    // typed reads for the rules
-    public synchronized long getNumber(String questionId)    { return Long.parseLong(answers.get(questionId)); }
-    public synchronized boolean getYesNo(String questionId)  { return "yes".equalsIgnoreCase(answers.get(questionId)); }
-    public synchronized String getText(String questionId)    { return answers.get(questionId); }
-
-    // package-private: only the state classes call these
-    void setState(ApplicationState state)           { this.state = state; }
-    void putAnswer(String questionId, String value) { answers.put(questionId, value); }
-    void setQuote(Quote quote)                      { this.quote = quote; }
-    void setRejectionReasons(List<String> reasons)  { this.rejectionReasons = new ArrayList<>(reasons); }
-    void setPolicy(Policy policy)                   { this.policy = policy; }
-    // + getters
+    // constructor, getters, setAnnualPremium, setRejectionReasons
 }
+
+public class Policy { private final String policyNumber, applicationId; private final long annualPremium; /* ctor + getters */ }
 ```
-**Package-private setters** are why the states live in the same package as `Application`: only states can change the status, and the service can't bypass them.
 
-**Step 3: rules as strategies** ([underwriting/](underwriting/))
 ```java
-public class RuleResult {
-    private final boolean declined;
-    private final int loadingPercent;
-    private final String reason;
-
-    private RuleResult(boolean declined, int loadingPercent, String reason) {
-        this.declined = declined;
-        this.loadingPercent = loadingPercent;
-        this.reason = reason;
-    }
-
-    public static RuleResult accept()                         { return new RuleResult(false, 0, null); }
-    public static RuleResult load(int percent, String reason) { return new RuleResult(false, percent, reason); }
-    public static RuleResult decline(String reason)           { return new RuleResult(true, 0, reason); }
-    // + getters
-}
-
 public interface UnderwritingRule {
-    RuleResult evaluate(Application application);
+    String check(Application app);                       // null = OK, otherwise the reason
 }
 
 public class AgeRule implements UnderwritingRule {
-    private final int minAge;
-    private final int maxAge;
-    public AgeRule(int minAge, int maxAge) { this.minAge = minAge; this.maxAge = maxAge; }
+    private final int minAge, maxAge;
+    // constructor
 
-    @Override
-    public RuleResult evaluate(Application app) {
-        long age = app.getNumber("age");
-        if (age < minAge || age > maxAge) {
-            return RuleResult.decline("Age " + age + " is outside " + minAge + "-" + maxAge);
-        }
-        return RuleResult.accept();
+    public String check(Application app) {
+        if (app.getAge() < minAge || app.getAge() > maxAge) return "Age " + app.getAge() + " is outside " + minAge + "-" + maxAge;
+        return null;
     }
 }
-
-public class SmokerRule implements UnderwritingRule {
-    @Override
-    public RuleResult evaluate(Application app) {
-        return app.getYesNo("smoker") ? RuleResult.load(50, "smoker +50%") : RuleResult.accept();
-    }
-}
-// BmiRule (>35 decline, 30–35 +25%) and CoverageToIncomeRule (cover > 20× income → decline): same shape
-
-public class Underwriter {
-    private final List<UnderwritingRule> rules;
-    private final PremiumCalculator premiumCalculator;
-
-    public Underwriter(List<UnderwritingRule> rules, PremiumCalculator premiumCalculator) {
-        this.rules = new ArrayList<>(rules);
-        this.premiumCalculator = premiumCalculator;
-    }
-
-    // run ALL rules so a rejection lists every reason
-    public UnderwritingDecision evaluate(Application app) {
-        List<String> declineReasons = new ArrayList<>();
-        List<String> loadingReasons = new ArrayList<>();
-        int totalLoading = 0;
-        for (UnderwritingRule rule : rules) {
-            RuleResult result = rule.evaluate(app);
-            if (result.isDeclined()) {
-                declineReasons.add(result.getReason());
-            } else if (result.getLoadingPercent() > 0) {
-                totalLoading += result.getLoadingPercent();
-                loadingReasons.add(result.getReason());
-            }
-        }
-        if (!declineReasons.isEmpty()) return UnderwritingDecision.reject(declineReasons);
-        return UnderwritingDecision.approve(premiumCalculator.calculate(app, totalLoading, loadingReasons));
-    }
-}
-
-public class PremiumCalculator {
-    // rate in paise per ₹1,000 of cover per year: integer math only
-    public Quote calculate(Application app, int loadingPercent, List<String> loadingReasons) {
-        long age = app.getNumber("age");
-        long coverage = app.getNumber("coverage");
-        long ratePaisePer1000 = age < 30 ? 100 : age < 45 ? 200 : 500;
-        long basePremium = coverage / 1000 * ratePaisePer1000 / 100;     // ₹1 crore at 28 → ₹10,000/yr
-        long annualPremium = basePremium * (100 + loadingPercent) / 100;
-        return new Quote(coverage, basePremium, loadingPercent, annualPremium, loadingReasons);
-    }
-}
+// CoverageToIncomeRule: the same shape. coverage > income × 20 → "Cover is more than 20x income"
 ```
 
-**Step 4: the service + thin questionnaire classes** ([InsuranceService.java](InsuranceService.java), [model/](model/))
 ```java
 public class InsuranceService {
-    private final Map<String, Application> applications = new ConcurrentHashMap<>();
-    private final Questionnaire questionnaire;
-    private final Underwriter underwriter;
-    private final AtomicLong seq = new AtomicLong();
+    private final Map<String, Application> applications = new HashMap<>();
+    private final List<UnderwritingRule> rules;
+    private int nextApplicationNumber = 1;
 
-    public InsuranceService(Questionnaire questionnaire, Underwriter underwriter) {
-        this.questionnaire = questionnaire;
-        this.underwriter = underwriter;
-    }
+    // constructor takes the rules
 
-    public Application startApplication(String applicantName) {
-        Application app = new Application("APP-" + seq.incrementAndGet(), applicantName, questionnaire);
+    public synchronized Application apply(String name, int age, boolean smoker, long coverage, long annualIncome) {
+        Application app = new Application("APP-" + nextApplicationNumber++, name, age, smoker, coverage, annualIncome);
         applications.put(app.getId(), app);
         return app;
     }
 
-    public void answer(String id, String questionId, String value) { get(id).answer(questionId, value); }
-    public QuestionnaireStep nextStep(String id)                    { return get(id).getNextIncompleteStep(); }
-    public void submit(String id)                                   { get(id).submit(); }
-    public Policy issuePolicy(String id)                            { return get(id).issue(); }
-
-    // startUnderwriting() fails if it already started, so the rules run once.
-    // While UNDERWRITING no answer can change, so the rules read a stable application.
-    public ApplicationStatus underwrite(String id) {
-        Application app = get(id);
-        app.startUnderwriting();
-        UnderwritingDecision decision = underwriter.evaluate(app);
-        app.recordDecision(decision);
+    public synchronized ApplicationStatus submit(String applicationId) {
+        Application app = findApplication(applicationId);
+        List<String> reasons = new ArrayList<>();
+        for (UnderwritingRule rule : rules) {                // run EVERY rule
+            String reason = rule.check(app);
+            if (reason != null) reasons.add(reason);
+        }
+        if (reasons.isEmpty()) {
+            app.moveTo(ApplicationStatus.APPROVED);          // throws if already submitted
+            app.setAnnualPremium(premium(app));
+        } else {
+            app.moveTo(ApplicationStatus.REJECTED);
+            app.setRejectionReasons(reasons);
+        }
         return app.getStatus();
     }
-    // + get(id) → NoSuchElementException if missing
+
+    public synchronized Policy issuePolicy(String applicationId) {
+        Application app = findApplication(applicationId);
+        app.moveTo(ApplicationStatus.ISSUED);                // throws unless APPROVED, so only once
+        return new Policy("POL-" + app.getId(), app.getId(), app.getAnnualPremium());
+    }
+
+    private long premium(Application app) {                 // ₹1 per ₹1,000 of cover; smokers ×2
+        long premium = app.getCoverage() / 1000;
+        return app.isSmoker() ? premium * 2 : premium;
+    }
+
+    private Application findApplication(String applicationId) {
+        Application app = applications.get(applicationId);
+        if (app == null) throw new NoSuchElementException("Unknown application " + applicationId);
+        return app;
+    }
+}
+```
+
+**Verify out loud:** walk through the run from section 0. For the double click, say: *"The first click moves APPROVED → ISSUED. The second sees ISSUED, and ISSUED → ISSUED isn't allowed, so it throws. That's one policy."*
+
+---
+
+## 5. Extensibility (~5 min)
+
+Name **which class changes**, write the few new lines, and don't redesign the rest.
+
+**Quick revision:**
+
+| # | Interviewer asks | One-line answer |
+|---|---|---|
+| 1 | "Use the State pattern" | A class per status; each allows only its own actions |
+| 2 | "A multi-step form" | The details become answers in a map; each question has a type that validates it |
+| 3 | "Smokers / high BMI pay more" | A rule can **load** the price, not just reject |
+| 4 | "Some cases need a human" | New status UNDER_REVIEW; a person approves or rejects later |
+| 5 | "Email the user, keep an audit trail" | Observer: listeners hear every status change |
+| 6 | "Millions of users, the lock is slow" | Lock one application, not the whole service |
+
+---
+
+### 1. "Use the State pattern"
+**Idea:** each status is a class, and every action is **refused by default**. A state overrides only what's legal in it.
+```java
+public interface ApplicationState {
+    ApplicationStatus status();
+    default void submit(Application app)  { throw notAllowed("submit"); }
+    default Policy issue(Application app) { throw notAllowed("issue"); }
+
+    private IllegalStateException notAllowed(String action) {
+        return new IllegalStateException("Cannot " + action + " when " + status());
+    }
 }
 
+public class DraftState implements ApplicationState {       // only submit is allowed
+    public ApplicationStatus status() { return ApplicationStatus.DRAFT; }
+    public void submit(Application app) { /* run rules → app.setState(new ApprovedState()) or new FinalState(REJECTED) */ }
+}
+
+public class ApprovedState implements ApplicationState {    // only issue is allowed
+    public ApplicationStatus status() { return ApplicationStatus.APPROVED; }
+    public Policy issue(Application app) {
+        app.setState(new FinalState(ApplicationStatus.ISSUED));
+        return new Policy("POL-" + app.getId(), app.getId(), app.getAnnualPremium());
+    }
+}
+
+public class FinalState implements ApplicationState {       // REJECTED, ISSUED: nothing is allowed
+    private final ApplicationStatus status;
+    public FinalState(ApplicationStatus status) { this.status = status; }
+    public ApplicationStatus status() { return status; }
+}
+// Application: private ApplicationState state = new DraftState();   submit() { state.submit(this); }
+```
+**Say:** *"Use it when each state has its own behaviour. A new state is a new class."*
+
+---
+
+### 2. "A multi-step form (Personal → Health)"
+**Idea:** the details become **answers in a map**, so a new question needs no new field. Each question's type validates its own answer.
+```java
 public enum QuestionType {
-    NUMBER, YES_NO, TEXT;
+    NUMBER, YES_NO;
     public boolean isValid(String value) {
-        if (value == null || value.isBlank()) return false;
-        switch (this) {
-            case NUMBER:
-                try { return Long.parseLong(value.trim()) >= 0; } catch (NumberFormatException e) { return false; }
-            case YES_NO:
-                return value.equalsIgnoreCase("yes") || value.equalsIgnoreCase("no");
-            default:
-                return true;
-        }
+        if (this == NUMBER) return value.matches("\\d+");
+        return value.equalsIgnoreCase("yes") || value.equalsIgnoreCase("no");
     }
 }
-// Question{id, text, type} · QuestionnaireStep{name, List<Question>} · Questionnaire{steps + getQuestion(id)}
-// Quote{coverage, basePremium, loadingPercent, annualPremium} · Policy{number, holder, cover, premium, issuedAt}
-// UnderwritingDecision{approve(quote) | reject(reasons)}
-```
 
-### Dry run
+// Application: Map<String, String> answers instead of the fields
+// InsuranceService
+public synchronized void answer(String applicationId, String questionId, String value) {
+    Application app = findApplication(applicationId);
+    if (app.getStatus() != ApplicationStatus.DRAFT) throw new IllegalStateException("Already submitted");
+    if (!questions.get(questionId).isValid(value)) throw new IllegalArgumentException("Bad answer: " + value);
+    app.putAnswer(questionId, value);
+}
 ```
-Rahul: age 28, ₹1 crore cover, 170 cm / 90 kg, smoker.
-answer(...) ×7      DraftState.answer validates each, stores it
-submit()            DraftState.submit: nothing missing → SUBMITTED
-underwrite()        SubmittedState.startUnderwriting → UNDERWRITING
-                    AgeRule accept · IncomeRule accept · BmiRule 31.1 → +25% · SmokerRule → +50%
-                    no declines → loading 75% → base ₹10,000 × 1.75 = ₹17,500/yr
-                    UnderwritingState.recordDecision → APPROVED
-answer("smoker","no")  ApprovedState has no answer() → default throws:
-                    "Cannot answer questions when the application is APPROVED"
-issue()             ApprovedState.issue → Policy POL-APP-2 → ISSUED
-issue() again       FinalState → "Cannot issue a policy when the application is ISSUED"
-```
-The driver also fires 10 simultaneous `issue` clicks: exactly 1 policy, 9 refused.
+**Say:** *"Questions become data, so product can add one without changing the code."*
 
 ---
 
-## 5. Follow-ups: answer out loud first, then open
-
-<details>
-<summary><b>Q1. Why not just an enum with a switch?</b></summary>
-
-An enum is right when states only limit **which move is next** (Food Delivery). Here states differ in **what they do**:
-- DRAFT validates and stores answers, and checks completeness on submit.
-- UNDERWRITING turns a decision into a quote or reasons.
-- APPROVED builds a policy.
-
-With an enum, each of the 5 actions needs its own `switch (status)` with "not allowed" branches: 5 × 6 = 30 cases, any of which can be wrong. With State, a new status is **one new class**; a new action is one `default` method plus overrides only where it's legal. Illegal actions throw automatically.
-</details>
-
-<details>
-<summary><b>Q2. "Some cases need a human underwriter." Add manual review.</b></summary>
-
-A third rule outcome, **refer**, and a new **REFERRED** state. Nothing existing breaks.
+### 3. "Smokers and high BMI pay more"
+**Idea:** a rule returns one of: **OK**, **charge X% more**, or **reject**. The extra percentages add up.
 ```java
-// RuleResult: one more outcome
-public static RuleResult refer(String reason) {
-    RuleResult r = new RuleResult(false, 0, reason);
-    r.referred = true;
-    return r;
+public class RuleResult {
+    final boolean rejected;
+    final int extraPercent;
+    final String reason;
+    public static RuleResult ok()                       { return new RuleResult(false, 0, null); }
+    public static RuleResult extra(int pct, String why) { return new RuleResult(false, pct, why); }
+    public static RuleResult reject(String why)         { return new RuleResult(true, 0, why); }
 }
 
-// Underwriter.evaluate: declines win, then referrals, then approve
-if (result.isDeclined()) {
-    declineReasons.add(result.getReason());
-} else if (result.isReferred()) {
-    referReasons.add(result.getReason());
-} else if (result.getLoadingPercent() > 0) { ... }
-...
-if (!declineReasons.isEmpty()) return UnderwritingDecision.reject(declineReasons);
-if (!referReasons.isEmpty())   return UnderwritingDecision.refer(referReasons);
-
-// UnderwritingState.recordDecision: one new branch
-if (decision.isReferred()) {
-    app.setRejectionReasons(decision.getRejectionReasons());   // reasons for the reviewer
-    app.setState(new ReferredState());
-} else if (decision.isApproved()) { ... }
-
-// REFERRED: the human records a decision exactly like the automatic underwriter does
-public class ReferredState extends UnderwritingState {
-    @Override
-    public ApplicationStatus status() { return ApplicationStatus.REFERRED; }
-}
+// submit(): in the loop
+//   if (r.rejected) reasons.add(r.reason); else totalExtra += r.extraPercent;
+// premium = base * (100 + totalExtra) / 100
 ```
-The reviewer's tool calls `app.recordDecision(approve(quote))` or `reject(reasons)`. Flow: `UNDERWRITING → REFERRED → APPROVED/REJECTED`. Example rule: "family history of heart disease → refer for medical review".
-</details>
+**Check:** BMI 31 → +25% → ₹10,000 becomes ₹12,500.
 
-<details>
-<summary><b>Q3. The actuaries add a new rule: some occupations are declined or cost more.</b></summary>
+---
 
-A new class added to the rules list. **No existing class changes** (Open/Closed):
+### 4. "Some cases need a human underwriter"
+**Idea:** a new status, UNDER_REVIEW. A rule can say "refer" (e.g. cover above ₹5 crore), and a person decides later.
 ```java
-public class OccupationRule implements UnderwritingRule {
-    private static final Set<String> DECLINED = Set.of("deep-sea diver", "stunt performer");
-    private static final Set<String> LOADED = Set.of("pilot", "miner");
+// ApplicationStatus: + UNDER_REVIEW
+//   DRAFT        → APPROVED, REJECTED, UNDER_REVIEW
+//   UNDER_REVIEW → APPROVED, REJECTED
 
-    @Override
-    public RuleResult evaluate(Application app) {
-        String job = app.getText("occupation").toLowerCase();
-        if (DECLINED.contains(job)) return RuleResult.decline("Occupation not covered: " + job);
-        if (LOADED.contains(job)) return RuleResult.load(30, job + " +30%");
-        return RuleResult.accept();
-    }
-}
-// wiring: new Underwriter(List.of(..., new OccupationRule()), calculator)
-// + one new Question("occupation", "Your occupation", QuestionType.TEXT) in the questionnaire
-```
-**Bonus:** rule thresholds (ages 18–65, 20× income) are constructor parameters, so they can come from config without a code change.
-</details>
-
-<details>
-<summary><b>Q4. Conditional questions: ask "cigarettes per day" only if smoker = yes.</b></summary>
-
-A question can say which answer makes it visible. "Missing" and "next step" only count **visible** questions.
-```java
-// Question: optional visibility condition
-private final String showIfQuestionId;   // null = always shown
-private final String showIfAnswer;
-
-public Question(String id, String text, QuestionType type, String showIfQuestionId, String showIfAnswer) { ... }
-
-public boolean isVisible(Map<String, String> answers) {
-    return showIfQuestionId == null || showIfAnswer.equalsIgnoreCase(answers.get(showIfQuestionId));
-}
-
-// Application.getMissingQuestionIds() and getNextIncompleteStep(): skip hidden questions
-if (q.isVisible(answers) && !answers.containsKey(q.getId())) missing.add(q.getId());
-
-// usage
-new Question("cigarettesPerDay", "How many per day?", QuestionType.NUMBER, "smoker", "yes");
-```
-A non-smoker can submit without it; a smoker can't. Still data, not code: the form changes and `Application` doesn't.
-</details>
-
-<details>
-<summary><b>Q5. A quote is valid for 30 days only.</b></summary>
-
-`Quote` gets `validUntil`. `ApprovedState.issue()` checks it and moves to a new **EXPIRED** final state:
-```java
-Quote quote = app.getQuote();
-if (Instant.now().isAfter(quote.getValidUntil())) {           // prices change: old quotes die
-    app.setState(new FinalState(ApplicationStatus.EXPIRED));
-    throw new IllegalStateException("Quote expired on " + quote.getValidUntil() + ". Please re-apply.");
-}
-```
-That's **lazy expiry** (checked when someone tries to use it), like the rate limiter's refill. Add a nightly job only if the business wants expired apps to show as EXPIRED in reports before anyone touches them. Inject a `Clock` instead of `Instant.now()` to test it.
-</details>
-
-<details>
-<summary><b>Q6. The applicant wants to edit answers after submitting.</b></summary>
-
-A `withdraw()` action, legal only in SUBMITTED (before underwriting starts):
-```java
-// ApplicationState
-default void withdraw(Application app) { throw notAllowed("withdraw"); }
-
-// SubmittedState
-@Override
-public void withdraw(Application app) { app.setState(new DraftState()); }   // answers kept, editable again
-```
-Once underwriting has started, `withdraw` throws automatically: UnderwritingState doesn't override it. That's the State pattern paying off: a new action costs one default method and one override.
-</details>
-
-<details>
-<summary><b>Q7. Underwriting calls external services (medical records, credit bureau) and can take hours.</b></summary>
-
-That's exactly why UNDERWRITING is its own state. Run it **asynchronously**, so `submit` returns immediately:
-```java
-private final ExecutorService underwritingPool = Executors.newFixedThreadPool(4);
-
-public void submit(String id) {
-    get(id).submit();
-    underwritingPool.submit(() -> {
-        try {
-            underwrite(id);
-        } catch (Exception e) {
-            // external service failed: send to a human instead of leaving it stuck in UNDERWRITING
-            get(id).recordDecision(UnderwritingDecision.refer(List.of("System error: " + e.getMessage())));
-        }
-    });
-}
-```
-In production: a queue (SQS/Kafka) + workers, retries with backoff for the external calls, and an email to the applicant when the decision is ready (Q12).
-</details>
-
-<details>
-<summary><b>Q8. Ethos sells several products (term life, whole life): different questions and rules.</b></summary>
-
-A `Product` bundles the questionnaire and underwriter. The service picks one by product id (a simple registry, i.e. Factory):
-```java
-public class Product {
-    private final String id;
-    private final Questionnaire questionnaire;
-    private final Underwriter underwriter;
-    // constructor + getters
-}
-
-private final Map<String, Product> products = new ConcurrentHashMap<>();
-
-public Application startApplication(String productId, String applicantName) {
-    Product product = products.get(productId);
-    if (product == null) throw new NoSuchElementException("Unknown product: " + productId);
-    Application app = new Application(nextId(), applicantName, product.getQuestionnaire());
-    app.setProductId(productId);        // new field on Application; underwrite() uses its product's underwriter
-    applications.put(app.getId(), app);
-    return app;
-}
-```
-The state classes don't change at all: the flow is the same for every product.
-</details>
-
-<details>
-<summary><b>Q9. Regulators need an audit trail of every status change.</b></summary>
-
-Every change already goes through **one** method, `Application.setState()`, so the audit lives there:
-```java
-private final List<String> history = new ArrayList<>();
-
-void setState(ApplicationState next) {
-    history.add(Instant.now() + " " + state.status() + " -> " + next.status());
-    this.state = next;
-}
-```
-That's another payoff of "only states can change the status". In production it's an append-only table: `(applicationId, from, to, at, actor, reason)`. Also store the **answers snapshot and rule results** used for the decision, since regulators ask *why* someone was declined.
-</details>
-
-<details>
-<summary><b>Q10. Collect the first premium before issuing the policy.</b></summary>
-
-Charge inside the application's lock, then issue. The application id is the **idempotency key**, so a retry can't charge twice:
-```java
-public Policy issuePolicy(String id, PaymentMethod payment) {
-    Application app = get(id);
-    synchronized (app) {                                         // same lock as Application's own methods
-        if (app.getStatus() != ApplicationStatus.APPROVED) {
-            throw new IllegalStateException("Cannot issue when " + app.getStatus());
-        }
-        if (!payment.charge(app.getApplicantName(), app.getQuote().getAnnualPremium(), app.getId())) {
-            throw new IllegalStateException("Payment failed");   // stays APPROVED: the user can retry
-        }
-        return app.issue();
+public synchronized void reviewDecision(String applicationId, boolean approve) {
+    Application app = findApplication(applicationId);
+    if (approve) {
+        app.moveTo(ApplicationStatus.APPROVED);          // throws unless UNDER_REVIEW
+        app.setAnnualPremium(premium(app));
+    } else {
+        app.moveTo(ApplicationStatus.REJECTED);
     }
 }
 ```
-A cleaner alternative is a new **PAYMENT_PENDING** state between APPROVED and ISSUED, if payment is asynchronous (UPI mandates, bank redirects).
-</details>
-
-<details>
-<summary><b>Q11. The applicant leaves at step 2 and comes back tomorrow.</b></summary>
-
-Answers are saved on every `answer()` call; persist them behind an `ApplicationRepository` interface (in-memory now, DB later). `getNextIncompleteStep()` already tells the UI where to resume. Expire stale DRAFTs after, say, 30 days.
-</details>
-
-<details>
-<summary><b>Q12. Email the applicant on approval or rejection; update the CRM.</b></summary>
-
-**Observer** on status changes. Hook it into `setState()` (the single place status changes), or have the service publish after each action. Listeners are wrapped in try/catch so a failed email doesn't undo an approval. In production, publish events to a queue.
-</details>
-
-<details>
-<summary><b>Q13. How would you know it's working in production?</b></summary>
-
-- **Metrics:** funnel (started → submitted → approved → issued) and **drop-off per questionnaire step**, approval/decline rate **per rule**, time in UNDERWRITING, referral rate.
-- **Alarms:** applications stuck in UNDERWRITING > N hours; a sudden jump in one rule's decline rate (a bad config or a bug); policies issued without payment (should be 0).
-- **Logs/audit:** the audit trail (Q9) with the rule results behind every decision.
-</details>
-
-<details>
-<summary><b>Q14. How do you test it?</b></summary>
-
-- **Each rule in isolation:** build an `Application` with fixed answers, call `rule.evaluate()`, check accept/load/decline. Rules are small, so tests are tiny.
-- **The state table:** for each state, call every action and assert only the legal ones work (the driver's "illegal actions" section).
-- **Pricing:** known inputs → exact rupees (₹10,000 and ₹17,500 cases).
-- **Concurrency:** 10 threads call `issuePolicy` on one approved application at once → exactly 1 policy (in the driver).
-</details>
+**Say:** *"Only the status list and one method change. A reject from any rule still wins over a refer."*
 
 ---
 
-## 6. Traps that cost points
-1. `if (status == ...)` in every service method instead of states owning their actions.
-2. A public `setStatus()` the service can call: it bypasses every rule. Keep the setter package-private.
-3. Stopping at the first failed rule: the applicant gets one reason, fixes it, and gets rejected again for another.
-4. `age`, `smoker`, `bmi` as fields on `Application`: every new question becomes a code change.
-5. `double` for premiums.
-6. Chain of Responsibility for rules, when all rules must run.
-7. Forgetting that answers must be frozen after submit, or rules could read changing data.
+### 5. "Email the user, update the CRM, keep an audit trail"
+**Idea:** the service just announces "status changed". Email, CRM and audit are each a listener (Observer).
+```java
+public interface StatusListener {
+    void statusChanged(Application app, ApplicationStatus from, ApplicationStatus to);
+}
+
+// InsuranceService
+private final List<StatusListener> listeners = new ArrayList<>();
+public synchronized void addListener(StatusListener l) { listeners.add(l); }
+
+// after each moveTo(...) in submit / issuePolicy:
+for (StatusListener l : listeners) l.statusChanged(app, from, app.getStatus());
+
+// service.addListener(new EmailListener());  service.addListener(new AuditLog());
+```
+**Say:** *"A new channel is a new listener. Emails are slow, so in production a listener just puts the event on a queue."*
 
 ---
 
-## 7. Recall check (next day, no peeking)
-1. Draw the state diagram, and list which action each state allows.
-2. Why do the interface methods have throwing `default`s? What does that buy you?
-3. Why are `Application`'s setters package-private?
-4. State here vs enum in Food Delivery: say the one-sentence difference.
-5. What does a rule return, and why does the `Underwriter` run all of them?
-6. Compute the premium: age 40, ₹50 lakh cover, smoker.
-7. Add manual review: what changes, and what doesn't?
+### 6. "Millions of users, the single lock is slow"
+**First say:** *"Each call holds the lock for microseconds. I'd measure first."*
 
-<details><summary>Answer to 6</summary>
+**Idea:** applications are independent, so lock **one application**, not the whole service.
+```java
+private final Map<String, Application> applications = new ConcurrentHashMap<>();
 
-Rate for 30–44 = 200 paise per ₹1,000 → 5,000,000 / 1,000 × 200 / 100 = ₹10,000 base. Smoker +50% → **₹15,000/yr**.
-</details>
-
-**Rebuild in 10 minutes:** `ApplicationState` with throwing defaults · `DraftState` (answer, submit) · `SubmittedState` · `UnderwritingState` · `ApprovedState` (issue) · `FinalState` · `Application` delegating · `UnderwritingRule` + `RuleResult` · `Underwriter` running all rules.
+public Policy issuePolicy(String applicationId) {            // no synchronized on the method
+    Application app = findApplication(applicationId);
+    synchronized (app) {                                      // only this application waits
+        app.moveTo(ApplicationStatus.ISSUED);
+        return new Policy("POL-" + app.getId(), app.getId(), app.getAnnualPremium());
+    }
+}
+```
+**Say:** *"A double click still gives one policy, but different users never wait for each other. Across servers: `UPDATE ... SET status = 'ISSUED' WHERE id = ? AND status = 'APPROVED'`, where 0 rows updated means it was already issued."*
 
 ---
 
-**Files:** `InsuranceService` · `application/` (`Application`, `ApplicationStatus`, `ApplicationState`, 5 states) · `underwriting/` (`UnderwritingRule`, `RuleResult`, 4 rules, `Underwriter`, `PremiumCalculator`) · `model/` (`Questionnaire`, `QuestionnaireStep`, `Question`, `QuestionType`, `Quote`, `Policy`, `UnderwritingDecision`) · `InsuranceDriver` (step-by-step flow, loadings, multi-reason rejection, 7 illegal actions, 10-thread issue test)
 ```bash
 mvn -q compile exec:java -Dexec.mainClass=com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.InsuranceDriver
 ```

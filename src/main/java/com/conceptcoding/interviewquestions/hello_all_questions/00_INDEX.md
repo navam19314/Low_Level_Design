@@ -31,7 +31,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 | Problem | The crux | Asked |
 |---|---|---|
 | [Vending Machine](state_machines/vendingmachine/INTERVIEW_WALKTHROUGH.md) | the textbook State pattern (class per state) | ★ |
-| [Insurance Application](state_machines/insurance/INTERVIEW_WALKTHROUGH.md) | State pattern + underwriting rules as Strategy | **E** (Ethos's core product) |
+| [Insurance Application](state_machines/insurance/INTERVIEW_WALKTHROUGH.md) | status flow (enum canMoveTo; State pattern in extensions) + underwriting rules as Strategy | **E** (Ethos's core product) |
 | [Elevator](state_machines/elevator/INTERVIEW_WALKTHROUGH.md) | SCAN scheduling, direction-aware dispatch | **E** |
 | [Download Manager](state_machines/downloadmanager/INTERVIEW_WALKTHROUGH.md) | producer–consumer + pause/resume race + resume from an offset | ★ |
 

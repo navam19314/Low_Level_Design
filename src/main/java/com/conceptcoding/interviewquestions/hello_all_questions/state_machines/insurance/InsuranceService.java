@@ -1,68 +1,68 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.application.Application;
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.application.ApplicationStatus;
+import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.Application;
+import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.ApplicationStatus;
 import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.Policy;
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.Questionnaire;
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.QuestionnaireStep;
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.model.UnderwritingDecision;
-import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.underwriting.Underwriter;
+import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.insurance.rules.UnderwritingRule;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
-// The service the web app calls. Thin on purpose: the rules for WHAT is allowed WHEN live
-// in the state classes, and the rules for WHO is eligible live in the underwriting rules.
+// The service the web app calls.
+// Thread safety: every public method is synchronized, one lock for the whole service.
+// Simple and correct: a double-clicked "Issue policy" can't create two policies.
 public class InsuranceService {
 
-    private final Map<String, Application> applications = new ConcurrentHashMap<>();
-    private final Questionnaire questionnaire;
-    private final Underwriter underwriter;
-    private final AtomicLong seq = new AtomicLong();
+    private final Map<String, Application> applications = new HashMap<>();
+    private final List<UnderwritingRule> rules;
+    private int nextApplicationNumber = 1;
 
-    public InsuranceService(Questionnaire questionnaire, Underwriter underwriter) {
-        this.questionnaire = questionnaire;
-        this.underwriter = underwriter;
+    public InsuranceService(List<UnderwritingRule> rules) {
+        this.rules = new ArrayList<>(rules);
     }
 
-    public Application startApplication(String applicantName) {
-        Application app = new Application("APP-" + seq.incrementAndGet(), applicantName, questionnaire);
+    public synchronized Application apply(String name, int age, boolean smoker, long coverage, long annualIncome) {
+        Application app = new Application("APP-" + nextApplicationNumber++, name, age, smoker, coverage, annualIncome);
         applications.put(app.getId(), app);
         return app;
     }
 
-    public void answer(String applicationId, String questionId, String value) {
-        get(applicationId).answer(questionId, value);
-    }
-
-    public QuestionnaireStep nextStep(String applicationId) {
-        return get(applicationId).getNextIncompleteStep();
-    }
-
-    public void submit(String applicationId) {
-        get(applicationId).submit();
-    }
-
-    // SUBMITTED → UNDERWRITING → APPROVED / REJECTED.
-    // startUnderwriting() fails if another thread already started, so rules run once.
-    // While UNDERWRITING, no answer can change, so the rules read a stable application.
-    public ApplicationStatus underwrite(String applicationId) {
-        Application app = get(applicationId);
-        app.startUnderwriting();
-        UnderwritingDecision decision = underwriter.evaluate(app);
-        app.recordDecision(decision);
+    // Run EVERY rule (not stop-at-first), so a rejection lists all the reasons at once.
+    public synchronized ApplicationStatus submit(String applicationId) {
+        Application app = findApplication(applicationId);
+        List<String> reasons = new ArrayList<>();
+        for (UnderwritingRule rule : rules) {
+            String reason = rule.check(app);
+            if (reason != null) reasons.add(reason);
+        }
+        if (reasons.isEmpty()) {
+            app.moveTo(ApplicationStatus.APPROVED);          // throws if already submitted
+            app.setAnnualPremium(premium(app));
+        } else {
+            app.moveTo(ApplicationStatus.REJECTED);
+            app.setRejectionReasons(reasons);
+        }
         return app.getStatus();
     }
 
-    public Policy issuePolicy(String applicationId) {
-        return get(applicationId).issue();
+    public synchronized Policy issuePolicy(String applicationId) {
+        Application app = findApplication(applicationId);
+        app.moveTo(ApplicationStatus.ISSUED);                // throws unless APPROVED, so it happens only once
+        return new Policy("POL-" + app.getId(), app.getId(), app.getAnnualPremium());
     }
 
-    public Application get(String applicationId) {
+    // ₹1 a year for every ₹1,000 of cover; smokers pay double. ₹1 crore → ₹10,000 a year.
+    private long premium(Application app) {
+        long premium = app.getCoverage() / 1000;
+        return app.isSmoker() ? premium * 2 : premium;
+    }
+
+    private Application findApplication(String applicationId) {
         Application app = applications.get(applicationId);
-        if (app == null) throw new NoSuchElementException("Application not found: " + applicationId);
+        if (app == null) throw new NoSuchElementException("Unknown application " + applicationId);
         return app;
     }
 }

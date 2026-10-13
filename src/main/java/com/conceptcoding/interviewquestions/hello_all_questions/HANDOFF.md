@@ -1,7 +1,7 @@
 # Session Handoff — LLD Interview Prep Deck
 
 > **UPDATE 2026-10-08 (newest):** the owner prefers a SHORT format, with a base small enough to write in 30–40 min.
-> Done so far for **parkinglot, cabbooking, movieticket, inventory** (fooddelivery has the short 5-phase layout but not yet
+> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance** (fooddelivery has the short 5-phase layout but not yet
 > sections 0 or the new extension cards):
 > - MD = **0 Plain words** (real-life picture, the 2–4 actions, real world → code table, only the 2–3 tricky
 >   points, one sample run) → **1 Requirements (~4)** → 2 Entities → 3 Class Design → 4 Implementation →
@@ -13,6 +13,10 @@
 >   City/Theater/Screen/search, holds, payment, cancel, pricing, per-seat locks and DB are extension cards.
 >   inventory base: Warehouse (synchronized add/remove/get) + InventoryManager (ordered-lock transfer);
 >   alerts (Observer), reservations, multi-product, WarehouseChooser, reorder and DB are extension cards.
+>   insurance base (2026-10-12, simplified again): Application with typed fields (age, smoker, coverage, income),
+>   enum ApplicationStatus (DRAFT/APPROVED/REJECTED/ISSUED, canMoveTo), UnderwritingRule (check → reason or null),
+>   InsuranceService apply/submit/issuePolicy (synchronized), premium = cover/1000 ×2 for smokers. State pattern,
+>   answers map + question types, loadings, manual review, Observer (+audit), per-app lock are extension cards.
 > - The older 2026-10-07 notes below describe the long format and the old class lists for those problems.
 
 > **UPDATE 2026-10-07 (read this first; it supersedes §2's MD structure, §3's file list and every path below):**

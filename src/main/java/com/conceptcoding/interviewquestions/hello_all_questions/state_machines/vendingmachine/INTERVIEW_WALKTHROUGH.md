@@ -7,7 +7,7 @@
 > 2. **Guards in the right order:** unknown slot → out of stock → not enough money.
 > 3. **Money handling:** integer rupees, refunds on cancel, change, and (follow-up) *can we even give change?*
 >
-> **Family:** F3 State machine. See [foundations](../../00_AMAZON_LLD_FOUNDATIONS.md). Compare with [Insurance](../insurance/INTERVIEW_WALKTHROUGH.md) (also State) and [Food Delivery](../../matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) (an enum is enough there).
+> **Family:** F3 State machine. See [foundations](../../00_AMAZON_LLD_FOUNDATIONS.md). Compare with [Insurance](../insurance/INTERVIEW_WALKTHROUGH.md) (enum in the base, State pattern as its Extension 1) and [Food Delivery](../../matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) (an enum is enough there).
 
 ---
 
