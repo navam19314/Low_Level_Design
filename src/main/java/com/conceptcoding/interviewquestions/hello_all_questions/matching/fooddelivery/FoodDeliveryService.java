@@ -15,7 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-// The service every app calls: customer (order, cancel), restaurant (accept), rider (pick up, deliver).
+// The service every app calls: customer (order), restaurant (accept), rider (pick up, deliver).
+// Lite version: once placed, an order only moves forward (no cancel).
 // Thread safety: every public method is synchronized, one lock for the whole service.
 // Simple and correct: one rider never gets two orders. Finer-grained locking is an extension.
 public class FoodDeliveryService {
@@ -59,6 +60,7 @@ public class FoodDeliveryService {
     // The rider is chosen FIRST: if nobody is free, the order stays PLACED (nothing changed).
     public synchronized void acceptOrder(String orderId) {
         Order order = findOrder(orderId);
+        if (order.getStatus() != OrderStatus.PLACED) throw new IllegalStateException("Order " + orderId + " is already " + order.getStatus());
         List<DeliveryPartner> free = new ArrayList<>();
         for (DeliveryPartner p : partners.values()) {
             if (p.isAvailable()) free.add(p);
@@ -79,12 +81,6 @@ public class FoodDeliveryService {
         Order order = findOrder(orderId);
         order.moveTo(OrderStatus.DELIVERED);
         order.getPartner().finishDelivery(order.getDeliveryLocation());
-    }
-
-    public synchronized void cancel(String orderId) {
-        Order order = findOrder(orderId);
-        order.moveTo(OrderStatus.CANCELLED);                   // throws once the food is picked up
-        if (order.getPartner() != null) order.getPartner().setAvailable(true);
     }
 
     public synchronized Order getOrder(String orderId) {

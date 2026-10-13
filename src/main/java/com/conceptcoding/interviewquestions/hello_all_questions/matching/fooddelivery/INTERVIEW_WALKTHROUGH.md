@@ -1,4 +1,4 @@
-# Food Delivery (Swiggy / Zomato)
+# Food Delivery (Zomato lite)
 
 > 30–40 min round. **Reported at Ethos.** Phases: **Requirements (5) → Entities (3) → Class Design (10–15) → Implementation (10) → Extensibility (5)**.
 > Sister problem: [Cab Booking](../cabbooking/INTERVIEW_WALKTHROUGH.md), the same "pick the nearest free one, then run a lifecycle" idea.
@@ -7,15 +7,14 @@
 
 ## 0. The problem in plain words (read first, don't say it in the interview)
 
-**Picture ordering on Swiggy.** You pick dishes from **one** restaurant and place the order. The restaurant accepts, and the app sends the **nearest free rider**. The rider picks up the food and delivers it, and is then free for the next order. You can cancel until the rider picks up the food.
+**Picture ordering on Zomato.** You pick dishes from **one** restaurant and place the order. The restaurant accepts, and the app sends the **nearest free rider**. The rider picks up the food and delivers it, and is then free for the next order. **Lite version:** once placed, an order can't be cancelled. It only moves forward.
 
-**The whole system is 5 actions:**
+**The whole system is 4 actions:**
 ```
 Customer    →  placeOrder(restaurant, {biryani: 2})  → PLACED, prices copied into the order
 Restaurant  →  acceptOrder(order)                     → ACCEPTED + the nearest free rider
 Rider       →  pickUp(order)                          → PICKED_UP
 Rider       →  deliver(order)                         → DELIVERED, the rider is free again
-Customer    →  cancel(order)                          → only before pickup; the rider is free again
 ```
 
 **Real world → code**
@@ -31,7 +30,7 @@ Customer    →  cancel(order)                          → only before pickup; 
 **Only 3 things are tricky:**
 1. **Copy the price into the order.** If the restaurant changes biryani from ₹320 to ₹999 after you order, your bill must stay ₹680. So `OrderItem` keeps its own copy of the name and price.
 2. **Two restaurants accept at the same moment, and one rider is nearest to both.** Only one may get that rider, so the methods are `synchronized`.
-3. **An order only moves forward.** You can't deliver food that was never picked up, or cancel food that's already on the road. `canMoveTo` lists the legal moves.
+3. **An order only moves forward.** You can't deliver food that was never picked up, or pick up an order twice. `canMoveTo` lists the legal moves.
 
 **Picture this run before you start coding:**
 ```
@@ -40,23 +39,23 @@ Alice orders 2 biryani + 1 raita     → ₹680; then the menu changes biryani t
 Restaurant accepts Alice's order     → Ravi (nearest)
 Bob's order accepted                 → Asha (Ravi is busy)
 Carol's order accepted               → "No rider free", stays PLACED
-Alice: cancel after pickup           → refused;  delivered → Ravi free, now at Alice's door
-Bob cancels                          → Asha free
+Alice: deliver before pickup         → refused;  picked up → delivered → Ravi free, now at Alice's door
+Carol's order accepted again         → Ravi (free again)
 ```
 
 ---
 
 ## 1. Requirements (~5 min)
 
-**Ask:** one restaurant per order? What happens if the price changes after ordering? When is the rider assigned? Until when can you cancel? Many orders at once?
+**Ask:** one restaurant per order? What happens if the price changes after ordering? When is the rider assigned? Can an order be cancelled (lite: no)? Many orders at once?
 
 ```
 1. placeOrder(customer, restaurant, items) → total from the CURRENT prices, copied into the order
 2. acceptOrder → the nearest free rider is assigned (if nobody is free: an error, the order stays PLACED)
-3. Order: PLACED → ACCEPTED → PICKED_UP → DELIVERED; cancel only before pickup
+3. Order: PLACED → ACCEPTED → PICKED_UP → DELIVERED, forward only (no cancel)
 4. Safe with many orders at once (a rider never gets two orders)
 
-Out of scope: cart, READY status, waiting for a rider, delivery fee / coupons, notifications, payment
+Out of scope: cancel, cart, READY status, waiting for a rider, delivery fee / coupons, notifications, payment
 ```
 
 ---
@@ -80,13 +79,13 @@ FoodDeliveryService
 
 ```
 FoodDeliveryService
-  behaviour: placeOrder(customer, restaurant, items, deliveryLocation) → Order · acceptOrder · pickUp · deliver · cancel
+  behaviour: placeOrder(customer, restaurant, items, deliveryLocation) → Order · acceptOrder · pickUp · deliver
 
 Restaurant        id, name, location, menu (id → MenuItem)       getItem(id)
 MenuItem          id, name, price, available
 Order             id, customerId, restaurantId, deliveryLocation, items, total, status, partner     moveTo(next)
 OrderItem         itemId, name, unitPrice, quantity               subtotal()
-OrderStatus       PLACED, ACCEPTED, PICKED_UP, DELIVERED, CANCELLED      canMoveTo(next)
+OrderStatus       PLACED, ACCEPTED, PICKED_UP, DELIVERED      canMoveTo(next)
 DeliveryPartner   id, name, location, available                   finishDelivery(dropPoint)
 Location          x, y                                            distanceTo(other)
 
@@ -116,14 +115,14 @@ PartnerAssignmentStrategy   choose(freePartners, pickup) → rider or null   ←
 
 ```java
 public enum OrderStatus {
-    PLACED, ACCEPTED, PICKED_UP, DELIVERED, CANCELLED;
+    PLACED, ACCEPTED, PICKED_UP, DELIVERED;                  // forward only
 
     public boolean canMoveTo(OrderStatus next) {
         switch (this) {
-            case PLACED:    return next == ACCEPTED || next == CANCELLED;
-            case ACCEPTED:  return next == PICKED_UP || next == CANCELLED;
-            case PICKED_UP: return next == DELIVERED;          // food on the road: no cancel
-            default:        return false;                      // DELIVERED, CANCELLED are final
+            case PLACED:    return next == ACCEPTED;
+            case ACCEPTED:  return next == PICKED_UP;
+            case PICKED_UP: return next == DELIVERED;
+            default:        return false;                      // DELIVERED is final
         }
     }
 }
@@ -212,6 +211,7 @@ public class FoodDeliveryService {
 
     public synchronized void acceptOrder(String orderId) {
         Order order = findOrder(orderId);
+        if (order.getStatus() != OrderStatus.PLACED) throw new IllegalStateException("Order " + orderId + " is already " + order.getStatus());
         List<DeliveryPartner> free = new ArrayList<>();
         for (DeliveryPartner p : partners.values()) {
             if (p.isAvailable()) free.add(p);
@@ -233,12 +233,6 @@ public class FoodDeliveryService {
         order.moveTo(OrderStatus.DELIVERED);
         order.getPartner().finishDelivery(order.getDeliveryLocation());   // free, at the customer's door
     }
-
-    public synchronized void cancel(String orderId) {
-        Order order = findOrder(orderId);
-        order.moveTo(OrderStatus.CANCELLED);                  // throws once picked up
-        if (order.getPartner() != null) order.getPartner().setAvailable(true);
-    }
     // findOrder / findRestaurant: look up, or throw NoSuchElementException
 }
 ```
@@ -255,18 +249,38 @@ Name **which class changes**, write the few new lines, and don't redesign the re
 
 | # | Interviewer asks | One-line answer |
 |---|---|---|
-| 1 | "No rider free: don't fail, make it wait" | A FIFO queue of waiting orders; a rider who becomes free takes the oldest |
-| 2 | "Add a cart, one restaurant only" | `Cart` remembers its restaurant and refuses items from another |
-| 3 | "Restaurant marks the food READY" | One more status in the enum + `markReady()` |
-| 4 | "Delivery fee, coupons" | `PricingStrategy`; a coupon wraps it (Decorator) |
-| 5 | "Notify the customer at every step" | Observer: listeners hear each status change |
-| 6 | "The rider can reject" | Free them and offer the order to the next rider (skip the ones who said no) |
-| 7 | "Many orders, the lock is slow" | `tryReserve()` claims a rider atomically, retry if taken |
+| 1 | "Let the customer cancel before pickup" | Add CANCELLED to the enum; free the rider |
+| 2 | "No rider free: don't fail, make it wait" | A FIFO queue of waiting orders; a rider who becomes free takes the oldest |
+| 3 | "Add a cart, one restaurant only" | `Cart` remembers its restaurant and refuses items from another |
+| 4 | "Restaurant marks the food READY" | One more status in the enum + `markReady()` |
+| 5 | "Delivery fee, coupons" | `PricingStrategy`; a coupon wraps it (Decorator) |
+| 6 | "Notify the customer at every step" | Observer: listeners hear each status change |
+| 7 | "The rider can reject" | Free them and offer the order to the next rider (skip the ones who said no) |
+| 8 | "Many orders, the lock is slow" | `tryReserve()` claims a rider atomically, retry if taken |
 
 ---
 
-### 1. "No rider free: let the order wait"
-**Idea:** accept anyway and put the order in a **queue** (oldest first). When a rider is freed (by a delivery or a cancel), they take the oldest waiting order.
+### 1. "Let the customer cancel before pickup"
+**Idea:** one more status, reachable only **before** pickup. Free the rider if one was assigned.
+```java
+// OrderStatus: + CANCELLED
+case PLACED:    return next == ACCEPTED || next == CANCELLED;
+case ACCEPTED:  return next == PICKED_UP || next == CANCELLED;
+case PICKED_UP: return next == DELIVERED;                     // food on the road: no cancel
+
+public synchronized void cancel(String orderId) {
+    Order order = findOrder(orderId);
+    order.moveTo(OrderStatus.CANCELLED);                       // throws once picked up
+    if (order.getPartner() != null) order.getPartner().setAvailable(true);
+}
+```
+**Check:** cancel while ACCEPTED → the rider is free · cancel after pickup → refused.
+**Say:** *"Only the enum and one method change. A refund would go through the payment service after the cancel succeeds."*
+
+---
+
+### 2. "No rider free: let the order wait"
+**Idea:** accept anyway and put the order in a **queue** (oldest first). When a rider is freed (after a delivery), they take the oldest waiting order.
 ```java
 private final Queue<Order> waiting = new LinkedList<>();
 
@@ -284,17 +298,16 @@ private boolean tryAssign(Order order) {                        // the old accep
     return true;
 }
 
-private void assignWaiting() {                                  // call at the end of deliver() and cancel()
+private void assignWaiting() {                                  // call at the end of deliver()
     while (!waiting.isEmpty() && tryAssign(waiting.peek())) waiting.poll();
 }
-// cancel(): if the order has no rider yet → waiting.remove(order)
 // pickUp(): if (order.getPartner() == null) throw "No rider yet"
 ```
-**Check:** 1 rider, 3 orders → 2 wait · first delivery → the **oldest** waiting order gets the rider · a cancelled waiting order leaves the queue.
+**Check:** 1 rider, 3 orders → 2 wait · first delivery → the **oldest** waiting order gets the rider.
 
 ---
 
-### 2. "Add a cart: items from one restaurant only"
+### 3. "Add a cart: items from one restaurant only"
 ```java
 public class Cart {
     private String restaurantId;                                 // null while empty
@@ -315,11 +328,11 @@ public class Cart {
 
 ---
 
-### 3. "The restaurant marks the food READY"
+### 4. "The restaurant marks the food READY"
 ```java
-// OrderStatus: PLACED, ACCEPTED, READY, PICKED_UP, DELIVERED, CANCELLED
-case ACCEPTED: return next == READY || next == CANCELLED;
-case READY:    return next == PICKED_UP || next == CANCELLED;
+// OrderStatus: PLACED, ACCEPTED, READY, PICKED_UP, DELIVERED
+case ACCEPTED: return next == READY;
+case READY:    return next == PICKED_UP;
 
 public synchronized void markReady(String orderId) { findOrder(orderId).moveTo(OrderStatus.READY); }
 ```
@@ -327,7 +340,7 @@ public synchronized void markReady(String orderId) { findOrder(orderId).moveTo(O
 
 ---
 
-### 4. "Delivery fee and coupons"
+### 5. "Delivery fee and coupons"
 ```java
 public interface PricingStrategy {
     long price(long foodTotal, double distanceKm);
@@ -349,7 +362,7 @@ public class CouponDiscount implements PricingStrategy {        // wraps any pri
 
 ---
 
-### 5. "Notify the customer at every step"
+### 6. "Notify the customer at every step"
 ```java
 public interface OrderListener {
     void statusChanged(Order order, OrderStatus newStatus);
@@ -368,7 +381,7 @@ for (OrderListener l : listeners) l.statusChanged(order, order.getStatus());
 
 ---
 
-### 6. "The rider can reject the order"
+### 7. "The rider can reject the order"
 ```java
 // Order: + Set<String> rejectedBy
 
@@ -384,7 +397,7 @@ public synchronized void rejectOrder(String orderId) {
     }
     DeliveryPartner next = assignmentStrategy.choose(candidates, restaurantLocation(order));
     order.setPartner(next);
-    if (next == null) waiting.add(order);                       // everyone said no: wait (Extension 1)
+    if (next == null) waiting.add(order);                       // everyone said no: wait (Extension 2)
     else next.setAvailable(false);
 }
 ```
@@ -392,7 +405,7 @@ public synchronized void rejectOrder(String orderId) {
 
 ---
 
-### 7. "Many orders, the single lock is slow"
+### 8. "Many orders, the single lock is slow"
 **First say:** *"Each call holds the lock for microseconds. I'd measure first."*
 
 **Idea:** lock **one rider**, not the whole service. `tryReserve()` checks and claims in one step. If another order just took that rider, choose again.

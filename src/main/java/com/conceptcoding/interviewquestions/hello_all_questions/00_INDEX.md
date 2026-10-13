@@ -25,7 +25,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 | Problem | The crux | Asked |
 |---|---|---|
 | [Cab Booking / Rider Matching](matching/cabbooking/INTERVIEW_WALKTHROUGH.md) | nearest-driver strategy, trip state machine (pricing + surge in extensions) | ★ |
-| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | order status flow, price copied into the order, nearest rider (cart, waiting queue in extensions) | **E** (reported at Ethos) |
+| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | Zomato lite: forward-only order flow, price copied into the order, nearest rider (cancel, cart, waiting queue in extensions) | **E** (reported at Ethos) |
 
 ## state_machines/: "what you can do depends on the current state"
 | Problem | The crux | Asked |

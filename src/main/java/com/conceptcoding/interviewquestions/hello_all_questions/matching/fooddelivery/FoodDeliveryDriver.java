@@ -57,16 +57,15 @@ public class FoodDeliveryDriver {
         System.out.println("  " + o3.getStatus() + ", rider " + o3.getPartner() + " (expect PLACED, null)");
 
         System.out.println("\n=== Pick up → deliver → rider free again, at the customer's door ===");
+        tryIt("deliver before pickup", () -> app.deliver(o1.getId()));
         app.pickUp(o1.getId());
-        tryIt("cancel after pickup", () -> app.cancel(o1.getId()));
         app.deliver(o1.getId());
         System.out.println("  " + o1.getStatus() + ", Ravi free? " + ravi.isAvailable() + ", at " + ravi.getLocation() + " (expect DELIVERED, true, (2.0,2.0))");
+        tryIt("pick up a delivered order", () -> app.pickUp(o1.getId()));
 
-        System.out.println("\n=== Cancel before pickup frees the rider ===");
-        app.cancel(o2.getId());
-        System.out.println("  " + o2.getStatus() + ", Asha free? " + asha.isAvailable() + " (expect CANCELLED, true)");
+        System.out.println("\n=== Carol's order can now get Ravi ===");
         app.acceptOrder(o3.getId());
-        System.out.println("  carol accepted, rider " + o3.getPartner().getName() + " (expect Ravi: 2.8 km away now, Asha 8 km)");
+        System.out.println("  carol accepted, rider " + o3.getPartner().getName() + " (expect Ravi: free again)");
 
         System.out.println("\n=== Rejections ===");
         raita.setAvailable(false);
