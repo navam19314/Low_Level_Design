@@ -9,7 +9,7 @@ public class Restaurant {
     private final String id;
     private final String name;
     private final Location location;
-    private final Map<String, MenuItem> menu = new HashMap<>();     // itemId → item
+    private final Map<String, Long> menu = new HashMap<>();      // dish → price in rupees
 
     public Restaurant(String id, String name, Location location) {
         this.id = id;
@@ -17,12 +17,12 @@ public class Restaurant {
         this.location = location;
     }
 
-    public void addItem(MenuItem item) { menu.put(item.getId(), item); }
+    public void setPrice(String dish, long price) { menu.put(dish, price); }
 
-    public MenuItem getItem(String itemId) {
-        MenuItem item = menu.get(itemId);
-        if (item == null) throw new NoSuchElementException("No item " + itemId + " at " + name);
-        return item;
+    public long getPrice(String dish) {
+        Long price = menu.get(dish);
+        if (price == null) throw new NoSuchElementException(name + " has no " + dish);
+        return price;
     }
 
     public String   getId()       { return id; }

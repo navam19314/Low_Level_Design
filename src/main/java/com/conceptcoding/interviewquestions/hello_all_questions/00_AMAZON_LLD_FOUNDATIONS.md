@@ -118,7 +118,7 @@ Amazon interviewers **will** ask *"what if two requests hit this at the same tim
 |---|---|---|
 | **A. Many independent keys, each with its own state** | `ConcurrentHashMap.computeIfAbsent` + `synchronized(perKeyObject)` | Rate limiter bucket per client, showtime in movie booking |
 | **B. Claim one thing exactly once** | `putIfAbsent` / `AtomicReference.compareAndSet` | claim a parking spot, claim a seat |
-| **C. Need two locks at once** | always lock in a **fixed order** (e.g. by id) | Splitwise transfer A→B, seat hold across 2 rows |
+| **C. Need two locks at once** | always lock in a **fixed order** (e.g. by id) | Inventory transfer A→B, per-seat booking (Movie Ticket) |
 | **D. Work produced in one place, done in another** | `BlockingQueue` + `ExecutorService` workers | Download Manager, async Logger, Job Scheduler |
 | **E. Rarely written, often read list** | `CopyOnWriteArrayList` | listeners, sinks, config |
 

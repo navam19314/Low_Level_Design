@@ -1,12 +1,8 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Expense;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Settlement;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Split;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.User;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.SplitType;
+import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.EqualSplit;
+import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.ExactSplit;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -17,93 +13,58 @@ import java.util.concurrent.TimeUnit;
 public class SplitwiseDriver {
 
     public static void main(String[] args) throws Exception {
-        ExpenseManager mgr = newManager();
-        mgr.createGroup("goa", "Goa trip", List.of("alice", "bob", "carol"));
-        mgr.createGroup("flat", "Flat 4B", List.of("alice", "dave"));
+        ExpenseManager app = new ExpenseManager();
 
-        System.out.println("=== EQUAL in 'goa': Alice pays ₹300 for A/B/C ===");
-        Expense e1 = mgr.addGroupExpense("goa", "alice", 300, SplitType.EQUAL, of("alice", 0, "bob", 0, "carol", 0), "Dinner");
-        print(e1);
-        System.out.println("  goa alice↔bob = " + mgr.getGroupBalance("goa", "alice", "bob") + " (expect +100)");
+        System.out.println("=== Alice pays ₹300 dinner, equal among alice, bob, carol ===");
+        app.addExpense("Dinner", "alice", 300, new EqualSplit(List.of("alice", "bob", "carol")));
+        System.out.println("  bob owes alice " + app.getBalance("alice", "bob") + ", carol owes alice " + app.getBalance("alice", "carol") + " (expect 100, 100)");
+        System.out.println("  from bob's side: " + app.getBalance("bob", "alice") + " (expect -100: bob owes)");
 
-        System.out.println("\n=== EQUAL with a remainder: ₹100 among 3 ===");
-        print(mgr.addGroupExpense("goa", "carol", 100, SplitType.EQUAL, of("alice", 0, "bob", 0, "carol", 0), "Chai"));
+        System.out.println("\n=== Bob pays ₹120 cab, equal with alice → debts in both directions cancel ===");
+        app.addExpense("Cab", "bob", 120, new EqualSplit(List.of("alice", "bob")));
+        System.out.println("  bob owes alice " + app.getBalance("alice", "bob") + " (expect 100 - 60 = 40)");
 
-        System.out.println("\n=== EXACT in 'goa': Bob pays ₹240 as 120/80/40 ===");
-        print(mgr.addGroupExpense("goa", "bob", 240, SplitType.EXACT, of("alice", 120, "bob", 80, "carol", 40), "Groceries"));
+        System.out.println("\n=== Carol pays ₹1000, exact: alice 600, carol 400 ===");
+        app.addExpense("Shopping", "carol", 1000, new ExactSplit(Map.of("alice", 600L, "carol", 400L)));
+        System.out.println("  alice owes carol " + app.getBalance("carol", "alice") + " (expect 600 - 100 = 500)");
+        System.out.println("  alice's balances: " + app.getBalances("alice") + " (expect bob=40, carol=-500)");
 
-        System.out.println("\n=== PERCENT in 'flat': Dave pays the ₹1000 electricity bill, 60% / 40% ===");
-        print(mgr.addGroupExpense("flat", "dave", 1000, SplitType.PERCENT, of("alice", 6000, "dave", 4000), "Electricity"));
+        System.out.println("\n=== Leftover rupees: ₹100 among 3 ===");
+        System.out.println("  " + new EqualSplit(List.of("a", "b", "c")).shares(100) + " (expect a=33, b=33, c=34)");
 
-        System.out.println("\n=== Group vs overall balances for Alice ===");
-        System.out.println("  goa nets  " + mgr.getGroupNetBalances("goa"));
-        System.out.println("  flat nets " + mgr.getGroupNetBalances("flat"));
-        System.out.println("  alice overall net = " + mgr.getNetBalance("alice") + " (goa + flat combined)");
+        System.out.println("\n=== Settle up: bob pays alice ₹40 ===");
+        app.settleUp("bob", "alice", 40);
+        System.out.println("  balance " + app.getBalance("alice", "bob") + " (expect 0)");
 
-        System.out.println("\n=== Simplify 'goa' ===");
-        List<Settlement> plan = mgr.simplifyGroupDebts("goa");
-        for (Settlement s : plan) System.out.println("  " + s.getDebtorId() + " pays " + s.getCreditorId() + " ₹" + s.getAmount());
+        System.out.println("\n=== Rejections ===");
+        tryIt("exact shares don't add up", () -> app.addExpense("X", "alice", 1000, new ExactSplit(Map.of("bob", 600L, "carol", 300L))));
+        tryIt("negative exact share", () -> app.addExpense("X", "alice", 1000, new ExactSplit(Map.of("bob", 1500L, "carol", -500L))));
+        tryIt("amount 0", () -> app.addExpense("X", "alice", 0, new EqualSplit(List.of("alice", "bob"))));
+        tryIt("same person twice", () -> new EqualSplit(List.of("bob", "bob")));
+        tryIt("nobody to split with", () -> new EqualSplit(List.of()));
+        tryIt("pay yourself", () -> app.settleUp("bob", "bob", 10));
+        System.out.println("  alice's balances unchanged: " + app.getBalances("alice") + " (expect carol=-500)");
 
-        System.out.println("\n=== Everyone pays as suggested → goa is settled ===");
-        for (Settlement s : plan) mgr.recordPayment("goa", s.getDebtorId(), s.getCreditorId(), s.getAmount());
-        System.out.println("  goa nets after payments " + mgr.getGroupNetBalances("goa") + " (expect {})");
-
-        System.out.println("\n=== Chain collapses: B→A, C→B, D→C ₹100 each = one payment ===");
-        ExpenseManager chain = newManager();
-        chain.addExpense("bob", 100, SplitType.EXACT, of("alice", 100), "x");
-        chain.addExpense("carol", 100, SplitType.EXACT, of("bob", 100), "y");
-        chain.addExpense("dave", 100, SplitType.EXACT, of("carol", 100), "z");
-        for (Settlement s : chain.simplifyDebts()) System.out.println("  " + s.getDebtorId() + " pays " + s.getCreditorId() + " ₹" + s.getAmount());
-
-        System.out.println("\n=== Validation ===");
-        tryIt("amount 0", () -> mgr.addExpense("alice", 0, SplitType.EQUAL, of("bob", 0), "x"));
-        tryIt("no participants", () -> mgr.addExpense("alice", 100, SplitType.EQUAL, new LinkedHashMap<>(), "x"));
-        tryIt("unknown user", () -> mgr.addExpense("alice", 100, SplitType.EQUAL, of("zed", 0), "x"));
-        tryIt("dave is not in goa", () -> mgr.addGroupExpense("goa", "alice", 100, SplitType.EQUAL, of("dave", 0), "x"));
-        tryIt("EXACT sums to 90, not 100", () -> mgr.addExpense("alice", 100, SplitType.EXACT, of("bob", 50, "carol", 40), "x"));
-        tryIt("EXACT negative share", () -> mgr.addExpense("alice", 1000, SplitType.EXACT, of("bob", 1500, "carol", -500), "x"));
-        tryIt("PERCENT sums to 90%", () -> mgr.addExpense("alice", 100, SplitType.PERCENT, of("bob", 5000, "carol", 4000), "x"));
-        tryIt("pay yourself", () -> mgr.recordPayment(null, "bob", "bob", 10));
-
-        concurrent();
+        concurrentExpenses();
     }
 
-    // 100 threads each add a ₹10 expense (alice pays, split with bob) at once: bob must owe exactly ₹500.
-    private static void concurrent() throws Exception {
-        System.out.println("\n=== Concurrency: 100 simultaneous ₹10 expenses ===");
-        ExpenseManager mgr = newManager();
+    // 100 threads each add "alice pays ₹10, equal with bob" at once: bob must owe exactly ₹500.
+    private static void concurrentExpenses() throws Exception {
+        System.out.println("\n=== Concurrency: 100 expenses at once ===");
+        ExpenseManager app = new ExpenseManager();
         ExecutorService pool = Executors.newFixedThreadPool(20);
-        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch go = new CountDownLatch(1);
         for (int i = 0; i < 100; i++) {
             pool.submit(() -> {
-                start.await();
-                mgr.addExpense("alice", 10, SplitType.EQUAL, of("alice", 0, "bob", 0), "coffee");
+                go.await();
+                app.addExpense("Chai", "alice", 10, new EqualSplit(List.of("alice", "bob")));
                 return null;
             });
         }
-        start.countDown();
+        go.countDown();
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.SECONDS);
-        System.out.println("  alice↔bob = " + mgr.getBalance("alice", "bob") + " (expect 500)");
-    }
-
-    private static ExpenseManager newManager() {
-        ExpenseManager mgr = new ExpenseManager();
-        for (String u : List.of("alice", "bob", "carol", "dave")) mgr.addUser(new User(u, u, u + "@x.com"));
-        return mgr;
-    }
-
-    // insertion-ordered map: of("alice", 100, "bob", 50)
-    private static Map<String, Long> of(Object... kv) {
-        Map<String, Long> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], ((Number) kv[i + 1]).longValue());
-        return m;
-    }
-
-    private static void print(Expense e) {
-        StringBuilder sb = new StringBuilder("  " + e.getDescription() + " ₹" + e.getTotalAmount() + " →");
-        for (Split s : e.getSplits()) sb.append(" ").append(s.getUserId()).append("=").append(s.getAmount());
-        System.out.println(sb);
+        System.out.println("  bob owes alice " + app.getBalance("alice", "bob") + " (expect 500), mirror " + app.getBalance("bob", "alice") + " (expect -500)");
     }
 
     private static void tryIt(String label, Runnable action) {

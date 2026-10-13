@@ -25,7 +25,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 | Problem | The crux | Asked |
 |---|---|---|
 | [Cab Booking / Rider Matching](matching/cabbooking/INTERVIEW_WALKTHROUGH.md) | nearest-driver strategy, trip state machine (pricing + surge in extensions) | ★ |
-| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | Zomato lite: forward-only order flow, price copied into the order, nearest rider (cancel, cart, waiting queue in extensions) | **E** (reported at Ethos) |
+| [Food Delivery](matching/fooddelivery/INTERVIEW_WALKTHROUGH.md) | Zomato lite: forward-only order flow, total fixed at order time, nearest rider (cancel, cart, waiting queue in extensions) | **E** (reported at Ethos) |
 
 ## state_machines/: "what you can do depends on the current state"
 | Problem | The crux | Asked |
@@ -46,7 +46,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 | Problem | The crux | Asked |
 |---|---|---|
 | [Rate Limiter](policies/ratelimiter/INTERVIEW_WALKTHROUGH.md) | token bucket math, per-client lock, distributed with Redis | ★ **E** |
-| [Splitwise](policies/splitwise/INTERVIEW_WALKTHROUGH.md) | split strategies, one balance per pair, greedy simplify | **E** |
+| [Splitwise](policies/splitwise/INTERVIEW_WALKTHROUGH.md) | split as Strategy, mirrored balance table (opposite debts cancel), settle up (simplify, groups in extensions) | **E** |
 | [Payment Gateway](policies/paymentgateway/INTERVIEW_WALKTHROUGH.md) | idempotency keys done right, payment state machine | ★ (HLD payments) |
 | [URL Shortener](policies/urlshortener/INTERVIEW_WALKTHROUGH.md) | Base62, counter vs random ids, the code-claim race | ☆ (HLD) |
 

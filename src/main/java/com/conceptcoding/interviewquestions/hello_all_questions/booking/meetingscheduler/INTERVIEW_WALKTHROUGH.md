@@ -251,7 +251,7 @@ locks.add(calendars.get(roomId));
 // lock them all in that order (nested synchronized, or ReentrantLocks in a loop)
 // → check the room AND every person for a conflict → insert into all of them → unlock in reverse
 ```
-Same lock-ordering rule as the deck's Splitwise transfer and per-seat booking. In real calendars (Google/Outlook) people are often only **warned** about clashes, not blocked; ask which the product wants.
+Same lock-ordering rule as the deck's Inventory transfer and per-seat booking. In real calendars (Google/Outlook) people are often only **warned** about clashes, not blocked; ask which the product wants.
 </details>
 
 <details>

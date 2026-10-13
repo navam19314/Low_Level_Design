@@ -1,8 +1,9 @@
 # Session Handoff — LLD Interview Prep Deck
 
 > **UPDATE 2026-10-08 (newest):** the owner prefers a SHORT format, with a base small enough to write in 30–40 min.
-> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance, fooddelivery** (fooddelivery simplified 2026-10-13: no cart,
-> no READY, no waiting queue in the base; those are extension cards):
+> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance, fooddelivery, splitwise** (fooddelivery = Zomato lite, 2026-10-13: menu is a
+> dish→price map, Order stores the total, forward-only status, no cancel/cart/READY/MenuItem/OrderItem/waiting queue
+> in the base; those are extension cards):
 > - MD = **0 Plain words** (real-life picture, the 2–4 actions, real world → code table, only the 2–3 tricky
 >   points, one sample run) → **1 Requirements (~4)** → 2 Entities → 3 Class Design → 4 Implementation →
 >   **5 Extensibility** = a quick-revision table + one card per extension (Idea → visible code → Check → Say).
@@ -13,6 +14,9 @@
 >   City/Theater/Screen/search, holds, payment, cancel, pricing, per-seat locks and DB are extension cards.
 >   inventory base: Warehouse (synchronized add/remove/get) + InventoryManager (ordered-lock transfer);
 >   alerts (Observer), reservations, multi-product, WarehouseChooser, reorder and DB are extension cards.
+>   splitwise base (2026-10-13): ExpenseManager with mirrored balances[a][b] == -balances[b][a] + addDebt;
+>   SplitStrategy objects carry their inputs (EqualSplit(people), ExactSplit(amounts)); no User/Group/Split/Settlement.
+>   Simplify debts, percent, groups, delete, Observer, per-group lock are extension cards.
 >   insurance base (2026-10-12, simplified again): Application with typed fields (age, smoker, coverage, income),
 >   enum ApplicationStatus (DRAFT/APPROVED/REJECTED/ISSUED, canMoveTo), UnderwritingRule (check → reason or null),
 >   InsuranceService apply/submit/issuePolicy (synchronized), premium = cover/1000 ×2 for smokers. State pattern,

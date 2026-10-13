@@ -1,27 +1,24 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.matching.fooddelivery.model;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Order {
 
     private final String id;
-    private final String customerId;
-    private final String restaurantId;
+    private final Restaurant restaurant;
+    private final Map<String, Integer> items;               // dish → quantity
+    private final long total;                               // worked out ONCE, at order time
     private final Location deliveryLocation;
-    private final List<OrderItem> items;
-    private final long total;                              // rupees
     private OrderStatus status = OrderStatus.PLACED;
-    private DeliveryPartner partner;                       // null until the restaurant accepts
+    private DeliveryPartner partner;                        // null until the restaurant accepts
 
-    public Order(String id, String customerId, String restaurantId, Location deliveryLocation,
-                 List<OrderItem> items, long total) {
+    public Order(String id, Restaurant restaurant, Map<String, Integer> items, long total, Location deliveryLocation) {
         this.id = id;
-        this.customerId = customerId;
-        this.restaurantId = restaurantId;
-        this.deliveryLocation = deliveryLocation;
-        this.items = new ArrayList<>(items);
+        this.restaurant = restaurant;
+        this.items = new HashMap<>(items);
         this.total = total;
+        this.deliveryLocation = deliveryLocation;
     }
 
     public void moveTo(OrderStatus next) {
@@ -31,13 +28,12 @@ public class Order {
         status = next;
     }
 
-    public String          getId()               { return id; }
-    public String          getCustomerId()       { return customerId; }
-    public String          getRestaurantId()     { return restaurantId; }
-    public Location        getDeliveryLocation() { return deliveryLocation; }
-    public List<OrderItem> getItems()            { return new ArrayList<>(items); }
-    public long            getTotal()            { return total; }
-    public OrderStatus     getStatus()           { return status; }
-    public DeliveryPartner getPartner()          { return partner; }
-    public void            setPartner(DeliveryPartner partner) { this.partner = partner; }
+    public String               getId()               { return id; }
+    public Restaurant           getRestaurant()       { return restaurant; }
+    public Map<String, Integer> getItems()            { return new HashMap<>(items); }
+    public long                 getTotal()            { return total; }
+    public Location             getDeliveryLocation() { return deliveryLocation; }
+    public OrderStatus          getStatus()           { return status; }
+    public DeliveryPartner      getPartner()          { return partner; }
+    public void                 setPartner(DeliveryPartner partner) { this.partner = partner; }
 }

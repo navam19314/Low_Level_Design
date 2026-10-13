@@ -1,147 +1,78 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.balance.BalanceSheet;
 import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Expense;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Group;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Settlement;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.Split;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.model.User;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.EqualSplitStrategy;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.ExactSplitStrategy;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.PercentSplitStrategy;
 import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.SplitStrategy;
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.splitwise.splittype.SplitType;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
-// The service the app calls. Validates every input, delegates the split math to a
-// Strategy, and keeps TWO views of balances up to date:
-//   - one BalanceSheet per group  ("settle up the Goa trip")
-//   - one overall BalanceSheet    ("what do I owe Bob across everything?")
-// synchronized: every expense touches several balances, which must change together.
+// The service the app calls: add an expense, settle up, see balances.
+// Thread safety: every public method is synchronized: one expense changes several balances,
+// and they must all change together.
 public class ExpenseManager {
 
-    private final Map<String, User> users = new HashMap<>();
-    private final Map<String, Group> groups = new HashMap<>();
-    private final Map<String, BalanceSheet> groupSheets = new HashMap<>();   // groupId → sheet
-    private final BalanceSheet overall = new BalanceSheet();
+    // balances[a][b] > 0  →  b owes a that much.
+    // balances[b][a] is ALWAYS the negative of balances[a][b], so debts in both directions cancel automatically.
+    private final Map<String, Map<String, Long>> balances = new HashMap<>();
     private final List<Expense> expenses = new ArrayList<>();
-    private final Map<SplitType, SplitStrategy> strategies = Map.of(
-            SplitType.EQUAL,   new EqualSplitStrategy(),
-            SplitType.EXACT,   new ExactSplitStrategy(),
-            SplitType.PERCENT, new PercentSplitStrategy());
-    private int expenseCounter = 0;
+    private int nextExpenseNumber = 1;
 
-    public synchronized void addUser(User user) {
-        users.put(user.getId(), user);
-    }
-
-    public synchronized Group createGroup(String groupId, String name, List<String> memberIds) {
-        if (groups.containsKey(groupId)) throw new IllegalArgumentException("Group exists: " + groupId);
-        Group group = new Group(groupId, name);
-        for (String uid : memberIds) {
-            requireUser(uid);
-            group.addMember(uid);
-        }
-        groups.put(groupId, group);
-        groupSheets.put(groupId, new BalanceSheet());
-        return group;
-    }
-
-    public synchronized void addMember(String groupId, String userId) {
-        requireUser(userId);
-        requireGroup(groupId).addMember(userId);
-    }
-
-    // Personal expense between friends, outside any group.
-    public synchronized Expense addExpense(String paidById, long totalAmount, SplitType splitType,
-                                           Map<String, Long> participantInputs, String description) {
-        return addGroupExpense(null, paidById, totalAmount, splitType, participantInputs, description);
-    }
-
-    // Example: Alice pays ₹300 in "goa", EQUAL among alice, bob, carol
-    //   → splits 100/100/100 → bob owes alice 100, carol owes alice 100 (alice's own share is skipped)
-    //   → recorded in the goa sheet AND the overall sheet
-    public synchronized Expense addGroupExpense(String groupId, String paidById, long totalAmount,
-                                                SplitType splitType, Map<String, Long> participantInputs,
-                                                String description) {
-        // 1. validate everything BEFORE changing anything
-        if (totalAmount <= 0) throw new IllegalArgumentException("Amount must be > 0");
-        if (participantInputs == null || participantInputs.isEmpty()) {
-            throw new IllegalArgumentException("An expense needs at least one participant");
-        }
-        requireUser(paidById);
-        for (String uid : participantInputs.keySet()) requireUser(uid);
-        Group group = groupId == null ? null : requireGroup(groupId);
-        if (group != null) {
-            if (!group.isMember(paidById)) throw new IllegalArgumentException(paidById + " is not in " + groupId);
-            for (String uid : participantInputs.keySet()) {
-                if (!group.isMember(uid)) throw new IllegalArgumentException(uid + " is not in " + groupId);
+    // Example: alice pays ₹300, split equally with bob and carol → bob owes alice 100, carol owes alice 100.
+    public synchronized Expense addExpense(String description, String paidBy, long amount, SplitStrategy split) {
+        if (amount <= 0) throw new IllegalArgumentException("Amount must be positive");
+        Map<String, Long> shares = split.shares(amount);        // throws if the shares don't add up
+        for (Map.Entry<String, Long> share : shares.entrySet()) {
+            if (!share.getKey().equals(paidBy)) {               // you don't owe yourself
+                addDebt(paidBy, share.getKey(), share.getValue());
             }
         }
-        // 2. the strategy computes shares and validates its own rules (EXACT sums, PERCENT = 100%)
-        List<Split> splits = strategies.get(splitType).calculate(totalAmount, participantInputs);
-
-        // 3. record
-        Expense expense = new Expense("EXP-" + (++expenseCounter), groupId, paidById, totalAmount,
-                                      splits, description, LocalDateTime.now());
+        Expense expense = new Expense("EXP-" + nextExpenseNumber++, description, paidBy, amount, shares);
         expenses.add(expense);
-        for (Split s : splits) {
-            if (s.getUserId().equals(paidById)) continue;              // you can't owe yourself
-            overall.addOwed(paidById, s.getUserId(), s.getAmount());
-            if (group != null) groupSheets.get(groupId).addOwed(paidById, s.getUserId(), s.getAmount());
-        }
         return expense;
     }
 
-    // "Bob paid Alice ₹100 back" (in a group, or personal when groupId is null)
-    public synchronized void recordPayment(String groupId, String fromUserId, String toUserId, long amount) {
-        if (amount <= 0) throw new IllegalArgumentException("Payment must be > 0");
-        if (fromUserId.equals(toUserId)) throw new IllegalArgumentException("Can't pay yourself");
-        requireUser(fromUserId);
-        requireUser(toUserId);
-        if (groupId != null) groupSheet(groupId).recordPayment(fromUserId, toUserId, amount);
-        overall.recordPayment(fromUserId, toUserId, amount);
+    // "Bob paid Alice ₹100 back": paying back is the reverse of owing.
+    public synchronized void settleUp(String from, String to, long amount) {
+        if (amount <= 0) throw new IllegalArgumentException("Amount must be positive");
+        if (from.equals(to)) throw new IllegalArgumentException("Can't pay yourself");
+        addDebt(from, to, amount);
     }
 
-    public synchronized long getBalance(String u1, String u2)        { return overall.getBalance(u1, u2); }
-    public synchronized long getGroupBalance(String groupId, String u1, String u2) {
-        return groupSheet(groupId).getBalance(u1, u2);
+    // positive → other owes user;  negative → user owes other;  0 → settled
+    public synchronized long getBalance(String user, String other) {
+        return get(user, other);
     }
-    public synchronized long getNetBalance(String userId) {
-        return overall.getNetBalances().getOrDefault(userId, 0L);
-    }
-    public synchronized Map<String, Long> getGroupNetBalances(String groupId) {
-        return groupSheet(groupId).getNetBalances();
-    }
-    public synchronized List<Settlement> simplifyDebts()                { return overall.simplify(); }
-    public synchronized List<Settlement> simplifyGroupDebts(String groupId) { return groupSheet(groupId).simplify(); }
 
-    public synchronized List<Expense> getGroupExpenses(String groupId) {
-        List<Expense> result = new ArrayList<>();
-        for (Expense e : expenses) if (groupId.equals(e.getGroupId())) result.add(e);
+    // everyone user has an open balance with: + they owe user, − user owes them
+    public synchronized Map<String, Long> getBalances(String user) {
+        Map<String, Long> result = new HashMap<>();
+        Map<String, Long> row = balances.get(user);
+        if (row == null) return result;
+        for (Map.Entry<String, Long> e : row.entrySet()) {
+            if (e.getValue() != 0) result.put(e.getKey(), e.getValue());
+        }
         return result;
     }
 
-    private BalanceSheet groupSheet(String groupId) {
-        requireGroup(groupId);
-        return groupSheets.get(groupId);
+    // debtor now owes creditor amount more: update BOTH directions so they always mirror each other
+    private void addDebt(String creditor, String debtor, long amount) {
+        put(creditor, debtor, get(creditor, debtor) + amount);
+        put(debtor, creditor, get(debtor, creditor) - amount);
     }
 
-    private User requireUser(String userId) {
-        User u = users.get(userId);
-        if (u == null) throw new NoSuchElementException("Unknown user: " + userId);
-        return u;
+    private long get(String a, String b) {
+        Map<String, Long> row = balances.get(a);
+        return row == null ? 0 : row.getOrDefault(b, 0L);
     }
 
-    private Group requireGroup(String groupId) {
-        Group g = groups.get(groupId);
-        if (g == null) throw new NoSuchElementException("Unknown group: " + groupId);
-        return g;
+    private void put(String a, String b, long value) {
+        Map<String, Long> row = balances.get(a);
+        if (row == null) {
+            row = new HashMap<>();
+            balances.put(a, row);
+        }
+        row.put(b, value);
     }
 }
