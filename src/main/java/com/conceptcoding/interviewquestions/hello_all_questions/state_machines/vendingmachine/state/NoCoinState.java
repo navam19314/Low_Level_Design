@@ -4,7 +4,8 @@ import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.v
 import com.conceptcoding.interviewquestions.hello_all_questions.state_machines.vendingmachine.model.Coin;
 
 // Idle state — the only useful action is inserting a coin.
-public class NoCoinState implements VendingMachineState {
+public class pwd
+        NoCoinState implements VendingMachineState {
 
     private final VendingMachine machine;
 
