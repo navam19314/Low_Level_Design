@@ -94,7 +94,7 @@ Learn the **skeleton** of each family. When you get a new question, first work o
 |---|---|---|---|
 | 2+ interchangeable algorithms/policies **on day 1** | **Strategy** | `if/else` on a type string grows in one class; adding one means editing tested code | Rate Limiter, Cab Booking, Splitwise, Elevator, Job Scheduler, Meeting Scheduler |
 | Behaviour of **every** method changes with state | **State** | every method starts with `if (state == ...)`; one missed check = illegal action | Vending Machine, Download Manager |
-| Optional extras stacked at runtime | **Decorator** | one subclass per combination (2ⁿ classes) | Coffee Machine, Pizza; metrics wrapper in Rate Limiter |
+| Optional extras stacked at runtime | **Decorator** | one subclass per combination (2ⁿ classes) | Coffee Machine, Pizza; pricing rules in Parking Lot, coupons in Food Delivery |
 | One event, several independent reactions that may change over time | **Observer** | the source has to know and call every reaction directly | Inventory low-stock alerts, Job Scheduler listeners |
 | Pick the right subtype from config/input | **Factory** | the `switch` is copied everywhere objects are created | Rate Limiter (config), Notification senders |
 | Object with many optional parts | **Builder** | constructors with 8 params, half `null` | Pizza (size, crust, toppings...) |

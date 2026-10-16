@@ -1,7 +1,7 @@
 # Session Handoff — LLD Interview Prep Deck
 
 > **UPDATE 2026-10-08 (newest):** the owner prefers a SHORT format, with a base small enough to write in 30–40 min.
-> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance, fooddelivery, splitwise** (fooddelivery = Zomato lite, 2026-10-13: menu is a
+> Done so far for **parkinglot, cabbooking, movieticket, inventory, insurance, fooddelivery, splitwise, tictactoe, ratelimiter** (fooddelivery = Zomato lite, 2026-10-13: menu is a
 > dish→price map, Order stores the total, forward-only status, no cancel/cart/READY/MenuItem/OrderItem/waiting queue
 > in the base; those are extension cards):
 > - MD = **0 Plain words** (real-life picture, the 2–4 actions, real world → code table, only the 2–3 tricky

@@ -1,9 +1,4 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.games.tictactoe.model;
 
-public enum Symbol {
-    X, O;
-
-    public Symbol opposite() {
-        return this == X ? O : X;
-    }
-}
+// The two players. X always goes first.
+public enum Symbol { X, O }

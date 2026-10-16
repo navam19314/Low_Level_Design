@@ -1,59 +1,39 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.games.tictactoe;
 
 import com.conceptcoding.interviewquestions.hello_all_questions.games.tictactoe.model.GameState;
-import com.conceptcoding.interviewquestions.hello_all_questions.games.tictactoe.model.Player;
 import com.conceptcoding.interviewquestions.hello_all_questions.games.tictactoe.model.Symbol;
 
 // One game: whose turn it is, whether it's over, who won.
-// makeMove validates in a fixed order and throws with the reason, so the UI can show it.
-// synchronized: two browser tabs (or two players' requests) can hit the same game at once.
+// synchronized: two requests (a double click, two tabs) can hit the same game at once.
 public class TicTacToeGame {
 
     private final Board board;
-    private final Player playerX;
-    private final Player playerO;
-    private Player currentPlayer;
+    private Symbol turn = Symbol.X;                    // X always goes first
     private GameState state = GameState.IN_PROGRESS;
-    private Player winner;
+    private Symbol winner;                             // null until someone wins
 
-    public TicTacToeGame(String nameX, String nameO, int size) {
+    public TicTacToeGame(int size) {
         this.board = new Board(size);
-        this.playerX = new Player(nameX, Symbol.X);
-        this.playerO = new Player(nameO, Symbol.O);
-        this.currentPlayer = playerX;                 // X always goes first
     }
 
-    public TicTacToeGame(String nameX, String nameO) { this(nameX, nameO, 3); }
-
-    public synchronized GameState makeMove(Player player, int row, int col) {
+    public synchronized GameState makeMove(Symbol player, int row, int col) {
         if (state != GameState.IN_PROGRESS) throw new IllegalStateException("Game is over: " + state);
-        if (player != currentPlayer)        throw new IllegalStateException("Not " + player + "'s turn");
-        if (!board.isInside(row, col))      throw new IllegalArgumentException("(" + row + "," + col + ") is off the board");
-        if (!board.isEmpty(row, col))       throw new IllegalArgumentException("(" + row + "," + col + ") is taken");
+        if (player != turn) throw new IllegalStateException("Not " + player + "'s turn");
+        board.place(row, col, player);                 // throws if off the board or taken
 
-        if (board.placeAndCheckWin(row, col, player.getMark())) {
+        if (board.hasWon(row, col, player)) {
             state = GameState.WON;
             winner = player;
         } else if (board.isFull()) {
             state = GameState.DRAW;
         } else {
-            currentPlayer = (player == playerX) ? playerO : playerX;
+            turn = (turn == Symbol.X) ? Symbol.O : Symbol.X;
         }
         return state;
     }
 
-    public synchronized void reset() {
-        board.reset();
-        currentPlayer = playerX;
-        state = GameState.IN_PROGRESS;
-        winner = null;
-    }
-
-    public synchronized Player    getCurrentPlayer() { return currentPlayer; }
-    public synchronized GameState getGameState()     { return state; }
-    public synchronized Player    getWinner()        { return winner; }
-    public synchronized String    render()           { return board.render(); }
-    public Player getPlayerX() { return playerX; }
-    public Player getPlayerO() { return playerO; }
-    public Board  getBoard()   { return board; }
+    public synchronized Symbol    getTurn()   { return turn; }
+    public synchronized GameState getState()  { return state; }
+    public synchronized Symbol    getWinner() { return winner; }
+    public synchronized String    render()    { return board.render(); }
 }

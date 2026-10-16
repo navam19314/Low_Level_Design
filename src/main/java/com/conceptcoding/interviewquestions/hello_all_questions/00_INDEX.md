@@ -45,7 +45,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 ## policies/: "same question, swappable algorithm"
 | Problem | The crux | Asked |
 |---|---|---|
-| [Rate Limiter](policies/ratelimiter/INTERVIEW_WALKTHROUGH.md) | token bucket math, per-client lock, distributed with Redis | ★ **E** |
+| [Rate Limiter](policies/ratelimiter/INTERVIEW_WALKTHROUGH.md) | token bucket with lazy refill, Strategy for the algorithm (sliding window, per-client lock, Redis in extensions) | ★ **E** |
 | [Splitwise](policies/splitwise/INTERVIEW_WALKTHROUGH.md) | split as Strategy, mirrored balance table (opposite debts cancel), settle up (simplify, groups in extensions) | **E** |
 | [Payment Gateway](policies/paymentgateway/INTERVIEW_WALKTHROUGH.md) | idempotency keys done right, payment state machine | ★ (HLD payments) |
 | [URL Shortener](policies/urlshortener/INTERVIEW_WALKTHROUGH.md) | Base62, counter vs random ids, the code-claim race | ☆ (HLD) |
@@ -65,7 +65,7 @@ Every problem, grouped by **what kind of problem it is**. Problems in the same f
 ## games/: "board, turns, win check"
 | Problem | The crux | Asked |
 |---|---|---|
-| [Tic-Tac-Toe](games/tictactoe/INTERVIEW_WALKTHROUGH.md) | O(1) win check with counters, N×N | ☆ **E** |
+| [Tic-Tac-Toe](games/tictactoe/INTERVIEW_WALKTHROUGH.md) | N×N, check only the lines through the last move (O(1) counters, bot, undo in extensions) | ☆ **E** |
 | [Snake & Ladder](games/snakeladder/INTERVIEW_WALKTHROUGH.md) | board = map, game = rules, dice Strategy for testing | ☆ **E** |
 | [Connect Four](games/connectfour/INTERVIEW_WALKTHROUGH.md) | gravity + 4-direction check through the last disc | low frequency |
 | [Chess](games/chess/INTERVIEW_WALKTHROUGH.md) | polymorphic pieces, king safety via try-and-undo | pattern coverage |

@@ -52,14 +52,14 @@ public class Ticket {
 ## A2. Interface vs abstract class
 
 ```java
-public interface Limiter {                          // a contract: WHAT, not HOW
-    RateLimitResult allow(String clientId);         // automatically public + abstract
+public interface RateLimiter {                      // a contract: WHAT, not HOW
+    boolean allow(String clientId);                 // automatically public + abstract
     default boolean isEnabled() { return true; }    // optional shared code (Java 8+)
 }
 
-public class TokenBucketLimiter implements Limiter {
+public class TokenBucketLimiter implements RateLimiter {
     @Override                                       // compiler checks you really override
-    public RateLimitResult allow(String clientId) { ... }
+    public boolean allow(String clientId) { ... }
 }
 ```
 
@@ -576,7 +576,7 @@ Beverage order = new ExtraShot(new Milk(new Espresso()));
 System.out.println(order.description() + " = ₹" + order.cost());   // Espresso + Milk + Extra shot = ₹180
 ```
 - **What goes wrong without it:** `EspressoWithMilk`, `EspressoWithMilkAndShot`, ... With *n* add-ons that's 2ⁿ classes.
-- **In the deck:** Coffee Machine, Pizza; `MeteredLimiter` (rate limiter follow-up).
+- **In the deck:** Coffee Machine, Pizza; Parking Lot pricing rules (`FirstHourFree`, `DailyCap`), Food Delivery coupons.
 
 ### B4. Factory
 **Picture:** a restaurant counter. You say "veg burger"; the kitchen decides which recipe to follow. You never walk into the kitchen.
@@ -607,7 +607,7 @@ NotificationSender sender = SenderFactory.create(Channel.SMS);
 sender.send("+91-98xxxxxx", "Your OTP is 4821");
 ```
 - **The point:** the `switch` still exists, but in **one** place. Callers only know the interface.
-- **In the deck:** Rate Limiter follow-up Q5 ("limits come from a config file"), notification senders.
+- **In the deck:** Rate Limiter quick answers ("limits come from config"), notification senders.
 - **Don't:** add a factory for a class with only one implementation.
 
 ### B5. Observer
@@ -728,7 +728,7 @@ The simplest correct version is `enum Registry { INSTANCE; }`.
 
 ### B8. Facade
 **Picture:** a hotel reception desk. One desk; behind it, housekeeping, billing and the kitchen.
-**What it is:** your main service class (`RateLimiter`, `BookingSystem`, `ParkingLot`). Callers use 2–3 methods; the service coordinates the internal objects. Every problem in this deck already has one.
+**What it is:** your main service class (`ExpenseManager`, `BookingSystem`, `ParkingLot`). Callers use 2–3 methods; the service coordinates the internal objects. Every problem in this deck already has one.
 **Say:** just call it "the service class". Naming it Facade is fine, but don't spend interview time on it.
 
 ### B9. Adapter
@@ -805,7 +805,7 @@ atm.dispense(1800);   // 3 x ₹500, 1 x ₹200, 1 x ₹100
 
 | Problem | Patterns that earn their place | Note |
 |---|---|---|
-| Rate Limiter | Strategy (+ Factory if config, Decorator for metrics) | the crux is the math + per-client lock |
+| Rate Limiter | Strategy (+ Factory if config) | the crux is the lazy-refill math + one lock for check-and-take |
 | Movie Ticket / Meeting Room | Facade + Strategy (room allocation, payment) | the crux is **concurrency**, not patterns |
 | Ride / Rider Matching | Strategy (matching, pricing) + enum trip state | Observer to notify the rider (follow-up) |
 | Vending Machine | **State** | the textbook State question |

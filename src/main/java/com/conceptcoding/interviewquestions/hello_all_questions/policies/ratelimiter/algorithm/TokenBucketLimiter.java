@@ -1,61 +1,59 @@
 package com.conceptcoding.interviewquestions.hello_all_questions.policies.ratelimiter.algorithm;
 
-import com.conceptcoding.interviewquestions.hello_all_questions.policies.ratelimiter.model.RateLimitResult;
+import com.conceptcoding.interviewquestions.hello_all_questions.policies.ratelimiter.RateLimiter;
 
 import java.time.Clock;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
+import java.util.Map;
 
-public class TokenBucketLimiter implements Limiter {
+// Each client has a jar of up to capacity tokens. A request takes one token; no token → rejected.
+// Tokens drip back at refillPerSecond. A full jar allows a short burst, the refill sets the steady rate.
+//
+// Lazy refill: no timer thread. When a client calls, we add the tokens that WOULD have dripped in
+// since their last call, capped at capacity.
+//
+// Thread safety: allow() is synchronized: the check and the "take a token" are one step.
+public class TokenBucketLimiter implements RateLimiter {
 
     private final int capacity;
-    private final int refillRatePerSecond;
+    private final double refillPerSecond;
     private final Clock clock;
-    private final ConcurrentHashMap<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final Map<String, Bucket> buckets = new HashMap<>();
 
-    public TokenBucketLimiter(int capacity, int refillRatePerSecond) {
-        this(capacity, refillRatePerSecond, Clock.systemUTC());
-    }
-
-    public TokenBucketLimiter(int capacity, int refillRatePerSecond, Clock clock) {
+    public TokenBucketLimiter(int capacity, double refillPerSecond, Clock clock) {
         this.capacity = capacity;
-        this.refillRatePerSecond = refillRatePerSecond;
+        this.refillPerSecond = refillPerSecond;
         this.clock = clock;
     }
 
     @Override
-    public RateLimitResult allow(String clientId) {
-        // first-time client starts with a full bucket
-        Bucket bucket = buckets.computeIfAbsent(clientId,
-                k -> new Bucket(capacity, clock.millis()));
-
-        synchronized (bucket) {
-            long now = clock.millis();
-            long elapsedMs = now - bucket.lastRefillTime;
-
-            // lazy refill: add however many tokens should have arrived since last touch
-            double tokensToAdd = (elapsedMs * refillRatePerSecond) / 1000.0;
-            bucket.tokens = Math.min(capacity, bucket.tokens + tokensToAdd); // cap at capacity
-            bucket.lastRefillTime = now;
-
-            if (bucket.tokens >= 1.0) {
-                bucket.tokens -= 1.0;
-                return RateLimitResult.allow((int) Math.floor(bucket.tokens));
-            }
-
-            // ceil so we never tell the client to retry too soon
-            long retryAfterMs = (long) Math.ceil((1.0 - bucket.tokens) * 1000.0 / refillRatePerSecond);
-            return RateLimitResult.deny(retryAfterMs);
+    public synchronized boolean allow(String clientId) {
+        long now = clock.millis();
+        Bucket bucket = buckets.get(clientId);
+        if (bucket == null) {                                   // a new client starts with a full jar
+            bucket = new Bucket(capacity, now);
+            buckets.put(clientId, bucket);
         }
+
+        double secondsPassed = (now - bucket.lastRefillMs) / 1000.0;
+        bucket.tokens = Math.min(capacity, bucket.tokens + secondsPassed * refillPerSecond);
+        bucket.lastRefillMs = now;
+
+        if (bucket.tokens >= 1) {
+            bucket.tokens -= 1;
+            return true;
+        }
+        return false;
     }
 
-    // mutable per-client state
-    static class Bucket {
+    // one client's jar
+    private static class Bucket {
         double tokens;
-        long lastRefillTime;
+        long lastRefillMs;
 
-        Bucket(double tokens, long lastRefillTime) {
+        Bucket(double tokens, long lastRefillMs) {
             this.tokens = tokens;
-            this.lastRefillTime = lastRefillTime;
+            this.lastRefillMs = lastRefillMs;
         }
     }
 }
